@@ -4,8 +4,8 @@
 
 
 
-STServoController::STServoController(ServoBus* bus, int tx_timeout_ms, int rx_timeout_ms)
-    : ServoController(bus, tx_timeout_ms, rx_timeout_ms) {
+STServoController::STServoController(ServoBus* bus, int tx_timeout_ms, int rx_timeout_ms, int auto_disable_rx)
+    : ServoController(bus, tx_timeout_ms, rx_timeout_ms,auto_disable_rx) {
 }
 
 

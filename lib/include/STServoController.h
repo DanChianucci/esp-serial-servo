@@ -14,7 +14,7 @@
 
 class STServoController : public ServoController<STServoPacket> {
   public:
-    STServoController(ServoBus* bus, int tx_timeout_ms, int rx_timeout_ms);
+    STServoController(ServoBus* bus, int tx_timeout_ms, int rx_timeout_ms, int auto_disable_rx=-1);
 
     virtual int send_raw_command(STServoPacket& cmd);
     virtual int read_raw_response(STServoPacket& rsp);
