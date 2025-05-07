@@ -1,6 +1,8 @@
 #ifndef STSERVODEFINES__H
 #define STSERVODEFINES__H
 
+#include <bit>
+
 static const uint8_t STS_MAX_ID = 0xFC;
 static const uint8_t STS_BROADCAST_ID = 0xFE;
 static const uint16_t STS_SYNC_PATTERN = 0xFFFF;

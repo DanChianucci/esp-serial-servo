@@ -27,8 +27,8 @@
 #include <vector>
 
 class ServoBus {
- private:
-  static constexpr const char* LOG_TAG = "ServoBus";
+ protected:
+  static constexpr const char LOG_TAG[] = "ServoBus";
   bool m_initialized;  // True when the Bus has been initialized.
 
   const uart_port_t m_uart_num;  // The UART peripheral id
@@ -146,5 +146,6 @@ class ServoBus {
 
   bool read_sync_raw(SyncState& sync_statem, TickType_t timeout);
 };
+
 
 #endif  // SERVO_BUS__H

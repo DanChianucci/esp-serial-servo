@@ -6,7 +6,6 @@
 
 STServoController::STServoController(ServoBus* bus, int tx_timeout_ms, int rx_timeout_ms)
     : ServoController(bus, tx_timeout_ms, rx_timeout_ms) {
-  m_disable_rx_on_tx = (bus->get_tx_pin() == bus->get_rx_pin());
 }
 
 
@@ -15,9 +14,9 @@ int STServoController::send_raw_command(STServoPacket& cmd)   {
   ESP_LOGD(LOG_TAG, "Sending command: ");
   ESP_LOG_BUFFER_HEXDUMP(LOG_TAG, cmd.get_buffer().data(), cmd.get_buffer().size(), ESP_LOG_DEBUG);
 
-  if (m_disable_rx_on_tx) m_servo_bus->enable_rx(false);
+  if (m_auto_disable_rx) m_servo_bus->enable_rx(false);
   int ret = m_servo_bus->write_bytes(cmd.get_buffer(), m_transmit_timeout);
-  if (m_disable_rx_on_tx) m_servo_bus->enable_rx(true);
+  if (m_auto_disable_rx) m_servo_bus->enable_rx(true);
   m_servo_bus->discard_input();
   return ret != ESP_FAIL ? ESP_OK : ESP_FAIL;
 };
