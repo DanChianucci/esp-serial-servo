@@ -52,6 +52,8 @@ inline bool update_timeout(timeout_ctrl_t* ctrl, timeout_duration_t* remaining) 
   }
 }
 
-inline timeout_duration_t timeout_ms(uint32_t ms) { return std::chrono::milliseconds(ms); }
+inline timeout_duration_t timeout_ms(uint32_t ms) {
+  return std::chrono::duration_cast<timeout_duration_t>(std::chrono::milliseconds(ms));
+}
 
 #endif  // SERVODUTILS__H

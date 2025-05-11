@@ -115,7 +115,7 @@ int ServoBus::discard_input() {
 int ServoBus::read_sync(const buffer_const_t pattern, timeout_duration_t timeout) {
   size_t match_index = 0;
   int bytes_read = 0;
-  timeout_duration_t remaining;
+  timeout_duration_t remaining=timeout;
 
   timeout_ctrl_t timeout_ctrl;
   init_timeout_ctrl(&timeout_ctrl);
@@ -130,41 +130,33 @@ int ServoBus::read_sync(const buffer_const_t pattern, timeout_duration_t timeout
       else
         match_index = 0;
     }
-    bool timed_out = update_timeout(&timeout_ctrl, &remaining) == pdTRUE;
+    bool timed_out = update_timeout(&timeout_ctrl, &remaining);
     ESP_RETURN_ON_FALSE(!timed_out, ESP_FAIL, LOG_TAG, "Timeout waiting for sync pattern");
   }
-  ESP_LOGD(LOG_TAG, "read_sync: read %d bytes before sync", bytes_read);
   return ESP_OK;
 }
 
 int ServoBus::read_bytes(const buffer_t data, timeout_duration_t timeout) {
   uint32_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count();
   int result = uart_read_bytes(m_uart_num, data.data(), data.size(), pdMS_TO_TICKS(ms));
-
-  ESP_LOGV(LOG_TAG, "read_bytes(%p, %u)", data.data(), data.size());
-  ESP_LOG_BUFFER_HEXDUMP(LOG_TAG, data.data(), result, ESP_LOG_VERBOSE);
   ESP_RETURN_ON_FALSE(result >= 0, ESP_FAIL, LOG_TAG, "Failed to read bytes");
   return result;
 }
 
 int ServoBus::write_bytes(const buffer_const_t data, timeout_duration_t timeout) {
-  ESP_LOGV(LOG_TAG, "write_bytes(%p, %u)", data.data(), data.size());
-  ESP_LOG_BUFFER_HEXDUMP(LOG_TAG, data.data(), data.size(), ESP_LOG_VERBOSE);
-
   int result = uart_write_bytes(m_uart_num, data.data(), data.size());
   ESP_RETURN_ON_FALSE(result >= 0, ESP_FAIL, LOG_TAG, "Failed to write bytes");
 
   if (timeout > timeout_duration_t::zero()) {
     int wait_res = flush_output(timeout);
-    ESP_RETURN_ON_FALSE(wait_res == ESP_OK, ESP_FAIL, LOG_TAG, "Failed to wait for tx done");
+    ESP_RETURN_ON_FALSE(wait_res == ESP_OK, ESP_FAIL, LOG_TAG, "Timeout waiting for tx flush");
   }
   return result;
 }
 
 int ServoBus::flush_output(timeout_duration_t timeout) {
-  uint32_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count();
+  int ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count();
   int result = uart_wait_tx_done(m_uart_num, pdMS_TO_TICKS(ms));
-  if (result != ESP_OK) ESP_LOGE(LOG_TAG, "Failed to flush output");
   return result;
 }
 

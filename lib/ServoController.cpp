@@ -21,15 +21,16 @@ int ServoController::send_command(const buffer_const_t data) {
 
 int ServoController::send_command(ServoPacket* command) { return send_command(command->as_bytes()); }
 
+
 int ServoController::read_response(const buffer_t& buffer, size_t readlen, timeout_duration_t timeout) {
   if (readlen > buffer.size()) return SRV_OVERFLOW;
   if (timeout == timeout_duration_t::zero()) timeout = m_response_timeout;
   return this->m_servo_bus->read_bytes(buffer.first(readlen), timeout);
 }
 
+
 int ServoController::read_response(ServoPacket* response) {
   response->reset();
-
   int size = read_raw_response(response->sync_buffer(), response->data_buffer(), response->len_index());
   SRV_RETURN_ON_ERR(size);
 
@@ -54,13 +55,11 @@ int ServoController::read_raw_response(const buffer_const_t sync_buffer, const b
   // 1. Read until sync pattern is found
   SRV_RETURN_ON_ERR(sync_response(sync_buffer, remaining));
   SRV_RETURN_IF(update_timeout(&timeout_ctrl, &remaining), SRV_TIMEOUT);
-
   // 2. Read dev id, length
   readlen = (len_pos + 1);
   SRV_RETURN_ON_ERR(read_response(data_buffer.subspan(pktlen), readlen, remaining));
   SRV_RETURN_IF(update_timeout(&timeout_ctrl, &remaining), SRV_TIMEOUT);
   pktlen += readlen;
-
   // 3. Read until checksum is found
   readlen = data_buffer[len_pos];
   SRV_RETURN_ON_ERR(read_response(data_buffer.subspan(pktlen), readlen, remaining));
