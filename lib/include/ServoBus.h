@@ -19,12 +19,11 @@
 #ifndef SERVO_BUS__H
 #define SERVO_BUS__H
 
-#include <freertos/FreeRTOS.h>
 #include <hal/gpio_types.h>
 #include <hal/uart_types.h>
 
+#include <cstdint>
 #include <span>
-#include <vector>
 
 class ServoBus {
  protected:
@@ -40,9 +39,9 @@ class ServoBus {
   const int m_tx_buffer_size;    // TX Buffer Size
   const int m_intr_alloc_flags;  // UART INTR Alloc Flags
 
-  const gpio_mode_t   m_tx_mode;  // TX Pin Direction / Mode
-  const gpio_pullup_t m_tx_pu;    // TX Pullup Enabled
-  const gpio_pullup_t m_rx_pu;    // RX Pullup Enabled
+  const gpio_mode_t m_tx_mode;  // TX Pin Direction / Mode
+  const gpio_pullup_t m_tx_pu;  // TX Pullup Enabled
+  const gpio_pullup_t m_rx_pu;  // RX Pullup Enabled
 
  public:
   ServoBus(uart_port_t uart_num, gpio_num_t tx_pin, gpio_num_t rx_pin,
@@ -55,71 +54,32 @@ class ServoBus {
   int initialize();
   int close();
 
-
   int enable_rx(bool enable);
 
-  int flush_output(TickType_t timeout);
-
-  // Write bytes to the bus, block until the bytes are written or timeout expires.
+  // Write bytes to the bus, block until the bytes are written or timeout
+  // expires.
   //@param data Pointer to the buffer containing the data to be written.
   //@param size Number of bytes to write.
   //@param timeout Timeout in ticks or 0 for non-blocking
   //@return The number of bytes written or ESP_FAIL on error.
-  int write_bytes(const uint8_t * const data, size_t size, TickType_t timeout=0);
+  int write_bytes(const std::span<const uint8_t>, uint32_t timeout = 0);
+  int flush_output(uint32_t timeout);
 
-  // Write bytes to the bus, block until the bytes are written or timeout expires.
-  //@param begin Pointer/iterator to the start of the buffer containing the data to be written.
-  //@param end   Pointer/iterator to the end of the buffer containing the data to be written.
-  //@param timeout Timeout in ticks or 0 for non-blocking
-  //@return The number of bytes written or ESP_FAIL on error.
-  template<std::contiguous_iterator T>
-  int write_bytes(T begin, T end, TickType_t timeout=0) {
-    return write_bytes(&*begin, std::distance(begin, end), timeout);
-  }
-
-  // Write bytes to the bus, block until the bytes are written or timeout expires.
-  //@param data Contiguous range containing the data to be written.
-  //@param timeout Timeout in ticks or 0 for non-blocking
-  //@return The number of bytes written or ESP_FAIL on error.
-  template<std::ranges::contiguous_range T>
-  int write_bytes(const T& data, TickType_t timeout) {
-    return write_bytes(std::ranges::begin(data),std::ranges::end(data), timeout);
-  }
-
-  int discard_input();
-
-  // Read bytes from the bus, block until the sync pattern is found or timeout expires.
+  // Read bytes from the bus, block until the sync pattern is found or timeout
+  // expires.
   //@param data buffercontaining the the sync pattern
   //@param timeout Timeout in ticks to wait for the sync operation to complete.
   //@return ESP_OK on success, ESP_FAIL on error.
-  int read_sync(const std::vector<uint8_t> & data, TickType_t timeout);
+  int read_sync(const std::span<const uint8_t> pattern, uint32_t timeout);
 
   // Read bytes from the bus, block until the bytes are read or timeout expires.
   //@param data Pointer to the buffer where the read data will be stored.
   //@param size Number of bytes to read.
   //@param timeout Timeout in ticks to wait for the read operation to complete.
   //@return The number of bytes read or ESP_FAIL on error.
-  int read_bytes(uint8_t *data, size_t size, TickType_t timeout);
+  int read_bytes(const std::span<uint8_t> data, uint32_t timeout);
 
-  //Read bytes from the bus, block until the bytes are read or timeout expires.
-  //@param begin Pointer/iterator to the start of the buffer where the read data will be stored.
-  //@param end   Pointer/iterator to the end of the buffer where the read data will be stored.
-  //@param timeout Timeout in ticks to wait for the read operation to complete.
-  //@return The number of bytes read or ESP_FAIL on error.
-  template<std::contiguous_iterator T>
-  int read_bytes(T begin, T end, TickType_t timeout) {
-    return read_bytes(&*begin, std::distance(begin, end), timeout);
-  }
-
-  // Read bytes from the bus, block until the bytes are read or timeout expires.
-  //@param data Contiguous range where the read data will be stored.
-  //@param timeout Timeout in ticks to wait for the read operation to complete.
-  //@return The number of bytes read or ESP_FAIL on error.
-  template<std::ranges::contiguous_range T>
-  int read_bytes(T& data, TickType_t timeout) {
-    return read_bytes(std::ranges::begin(data), std::ranges::end(data), timeout);
-  }
-
+  int discard_input();
 
   ~ServoBus();
 
@@ -139,13 +99,12 @@ class ServoBus {
   int initialize_gpio();
 
   struct SyncState {
-    const std::vector<uint8_t> pattern;
+    const std::span<const uint8_t> sync_pattern;
     uint8_t match_index;
     size_t read_bytes;
   };
 
-  bool read_sync_raw(SyncState& sync_statem, TickType_t timeout);
+  bool read_sync_raw(SyncState& sync_statem, uint32_t timeout);
 };
-
 
 #endif  // SERVO_BUS__H

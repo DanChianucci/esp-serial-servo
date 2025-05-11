@@ -1,12 +1,7 @@
-// C(const C&) = default;               // Copy constructor
-// C(C&&) = default;                    // Move constructor
-// C& operator=(const C&) = default;  // Copy assignment operator
-// C& operator=(C&&) = default;       // Move assignment operator
-// virtual ~C() { }                     // Destructor
-
 #ifndef STSERVOPACKET__H
 #define STSERVOPACKET__H
-#include <esp_log.h>
+
+#include <cstdint>
 
 #include "STServoDefines.h"
 #include "ServoPacket.h"
@@ -14,6 +9,35 @@
 class STServoPacket : public ServoPacket {
  public:
   STServoPacket() = default;
+  STServoPacket(const buffer_t& buffer);
+
+  virtual buffer_t sync_buffer();
+  virtual buffer_t data_buffer();
+  virtual size_t len_index();
+
+  virtual void reset();
+
+  virtual bool is_well_formed();
+
+  uint8_t compute_checksum();
+  uint8_t compute_length();
+
+  uint16_t get_sync();
+  uint8_t get_device_id();
+  uint8_t get_length();
+  uint8_t get_code();
+  buffer_const_t get_data();
+  uint8_t get_checksum();
+
+  STServoPacket& set_sync(uint16_t val);
+  STServoPacket& set_dev_id(uint8_t val);
+  STServoPacket& set_length(uint8_t val);
+  STServoPacket& set_code(uint8_t val);
+  STServoPacket& set_data(const buffer_const_t val);
+  STServoPacket& set_checksum(uint8_t val);
+
+  STServoPacket& update_length();
+  STServoPacket& update_checksum();
 
   /**
    * @brief STServoPacket fullly specified constructor
@@ -24,59 +48,17 @@ class STServoPacket : public ServoPacket {
    * @param data   Data Parameters Field
    * @param chksum Checksum Field
    */
-  template <std::input_iterator T>
-  STServoPacket(uint16_t sync_pattern, uint8_t dev_id, uint8_t length,
-                uint8_t code, T dbegin, T dend, uint8_t chksum) {
-    if constexpr (std::endian::native != STS_ENDIANNESS) {
-      sync_pattern = std::byteswap(sync_pattern);
-    }
-    raw_buffer = std::vector<uint8_t>(std::distance(dbegin, dend) + 6);
+  STServoPacket& init(uint16_t sync, uint8_t dev_id, uint8_t length,
+                      uint8_t code, const buffer_const_t data,
+                      uint8_t checksum);
+  STServoPacket& init(uint8_t dev_id, uint8_t code, const buffer_const_t data);
 
-    auto t = {uint8_t(sync_pattern >> 8), uint8_t(sync_pattern & 0xFF), dev_id,
-              length, code};
-    std::copy(t.begin(), t.end(), raw_buffer.begin());
+ private:
+  inline uint8_t get_byte(uint8_t idx, uint8_t default_val = 0x00);
+  inline uint16_t get_word(uint8_t idx, uint16_t default_val = 0x0000);
 
-    std::copy(dbegin, dend, raw_buffer.begin() + 5);
-    raw_buffer.back() = chksum;
-  }
-
-  template <std::ranges::range T>
-  STServoPacket(uint16_t sync_pattern, uint8_t dev_id, uint8_t length,
-                uint8_t code, T&& data, uint8_t chksum)
-      : STServoPacket(sync_pattern, dev_id, length, code,
-                      std::ranges::begin(data), std::ranges::end(data),
-                      chksum) {}
-
-  template <std::input_iterator T>
-  STServoPacket(uint8_t dev_id, uint8_t code, T dbegin, T dend)
-      : STServoPacket(STS_SYNC_PATTERN, dev_id, std::distance(dbegin, dend) + 2,
-                      code, dbegin, dend, 0x00) {
-    raw_buffer.back() = compute_checksum();
-  }
-
-  template <std::ranges::input_range T>
-  STServoPacket(uint8_t dev_id, uint8_t code, T&& data)
-      : STServoPacket(STS_SYNC_PATTERN, dev_id, std::ranges::size(data) + 2,
-                      code, std::ranges::begin(data), std::ranges::end(data),
-                      0x00) {
-    raw_buffer.back() = compute_checksum();
-  }
-
-  template <typename T>
-  void set_buffer(T&& sequence) {
-    raw_buffer = std::forward<T>(sequence);
-  }
-
-  bool is_well_formed();
-  uint8_t compute_checksum();
-  uint8_t compute_length();
-
-  uint16_t get_header();
-  uint8_t get_device_id();
-  uint8_t get_length();
-  uint8_t get_code();
-  std::span<const uint8_t> get_data();
-  uint8_t get_checksum();
+  inline STServoPacket& set_byte(size_t idx, uint8_t val);
+  inline STServoPacket& set_word(size_t idx, uint16_t val);
 };
 
 #endif  // STSERVOPACKET__H

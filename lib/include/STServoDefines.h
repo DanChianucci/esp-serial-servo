@@ -2,6 +2,7 @@
 #define STSERVODEFINES__H
 
 #include <bit>
+#include <cstdint>
 
 static const uint8_t STS_MAX_ID = 0xFC;
 static const uint8_t STS_BROADCAST_ID = 0xFE;
@@ -85,71 +86,70 @@ typedef enum {
 //| 0x27 (39) | STS_COEF_I_CLOSED     | EEPROM  | 1      |
 //| 0x28 (40) | STS_TORQUE_EN         | SRAM    | 1      |
 //| 0x29 (41) | STS_TARGET_ACCEL      | SRAM    | 1      |
-//| 0x2A (42) | STS_TARGET_POS        | SRAM    | 2      | Controls position/steps in position/step control mode
-//| 0x2C (44) | STS_TARGET_TIME       | SRAM    | 2      | Controls time param in open loop pwm mode
-//| 0x2E (46) | STS_TARGET_SPEED      | SRAM    | 2      | Controls speed in constant speed mode
-//| 0x30 (48) | STS_TORQUE_LIMIT      | SRAM    | 2      |
-//| 0x37 (55) | STS_EEPROM_LOCK       | SRAM    | 1      |
-//| 0x38 (56) | STS_POSITION          | SRAM    | 2      |
-//| 0x3A (58) | STS_SPEED             | SRAM    | 2      |
-//| 0x3C (60) | STS_LOAD              | SRAM    | 2      |
-//| 0x3E (62) | STS_VOLTAGE           | SRAM    | 1      |
-//| 0x3F (63) | STS_TEMPERATURE       | SRAM    | 1      |
-//| 0x40 (64) | STS_ASYNC_WRITE_FLAG  | SRAM    | 1      |
-//| 0x41 (65) | STS_STATUS            | SRAM    | 1      |
-//| 0x42 (66) | STS_MOVING_FLAG       | SRAM    | 1      |
-//| 0x45 (69) | STS_CURRENT           | SRAM    | 2      |
+//| 0x2A (42) | STS_TARGET_POS        | SRAM    | 2      | Controls
+// position/steps in position/step control mode | 0x2C (44) | STS_TARGET_TIME |
+// SRAM    | 2      | Controls time param in open loop pwm mode | 0x2E (46) |
+// STS_TARGET_SPEED      | SRAM    | 2      | Controls speed in constant speed
+// mode | 0x30 (48) | STS_TORQUE_LIMIT      | SRAM    | 2      | | 0x37 (55) |
+// STS_EEPROM_LOCK       | SRAM    | 1      | | 0x38 (56) | STS_POSITION | SRAM
+//| 2      | | 0x3A (58) | STS_SPEED             | SRAM    | 2      | | 0x3C
+//(60) | STS_LOAD              | SRAM    | 2      | | 0x3E (62) | STS_VOLTAGE |
+// SRAM    | 1      | | 0x3F (63) | STS_TEMPERATURE       | SRAM    | 1      | |
+// 0x40 (64) | STS_ASYNC_WRITE_FLAG  | SRAM    | 1      | | 0x41 (65) |
+// STS_STATUS            | SRAM    | 1      | | 0x42 (66) | STS_MOVING_FLAG |
+// SRAM    | 1      | | 0x45 (69) | STS_CURRENT           | SRAM    | 2      |
 //|:---------:|-----------------------|:-------:|:------:|---------------------
 typedef enum {
-  STS_VER_MAJ             = 0x00, // Firmware Major Version
-  STS_VER_SUB             = 0x01, // Firmware Minor Version
-  STS_MODEL_MAJ           = 0x03, // Model Version Major
-  STS_MODEL_SUB           = 0x04, // Model Version Minor
-  STS_DEVID               = 0x05, // Device ID
-  STS_BAUD_RATE           = 0x06, // Baud Rate (See `sts_baud_rate_e`)
-  STS_RSP_DELAY           = 0x07,
-  STS_RSP_MODE            = 0x08,
-  STS_MIN_ANGLE           = 0x09,
-  STS_MAX_ANGLE           = 0x0B,
-  STS_MAX_TEMP            = 0x0D,
-  STS_MAX_VOLT            = 0x0E,
-  STS_MIN_VOLT            = 0x0F,
-  STS_MAX_TORQUE          = 0x10,
-  PHASE                   = 0x12,
-  STS_UNLOAD_CONDITION    = 0x13,
-  STS_ALARM_CONDITION     = 0x14,
-  STS_COEF_P              = 0x15,
-  STS_COEF_D              = 0x16,
-  STS_COEF_I              = 0x17,
-  STS_STARTING_FORCE      = 0x18,
-  STS_CW_DEADBAND         = 0x1A,
-  STS_CCW_DEADBAND        = 0x1B,
-  STS_CURRENT_LIMIT       = 0x1C,
-  STS_ANGLE_RES           = 0x1E,
-  STS_POS_OFFSET          = 0x1F,
-  STS_MOVE_MODE           = 0x21,
-  STS_PROTECTION_TORQUE   = 0x22,
-  STS_PROTECTION_TIME     = 0x23,
-  STS_OVERLOAD_TORQUE     = 0x24,
-  STS_COEF_P_CLOSED       = 0x25,
-  STS_OVERCURRENT_TIME    = 0x26,
-  STS_COEF_I_CLOSED       = 0x27,
-  STS_TORQUE_EN           = 0x28,
-  STS_TARGET_ACCEL        = 0x29,
-  STS_TARGET_POS          = 0x2A,   //controls position/steps in position/step control mode
-  STS_TARGET_TIME         = 0x2C,   //controlls time param in open loop pwm mode
-  STS_TARGET_SPEED        = 0x2E,   //Controls speed in constant speed mode
-  STS_TORQUE_LIMIT        = 0x30,
-  STS_EEPROM_LOCK         = 0x37,
-  STS_POSITION            = 0x38,
-  STS_SPEED               = 0x3A,
-  STS_LOAD                = 0x3C,
-  STS_VOLTAGE             = 0x3E,
-  STS_TEMPERATURE         = 0x3F,
-  STS_ASYNC_WRITE_FLAG    = 0x40,
-  STS_STATUS              = 0x41,
-  STS_MOVING_FLAG         = 0x42,
-  STS_CURRENT             = 0x45
+  STS_VER_MAJ = 0x00,    // Firmware Major Version
+  STS_VER_SUB = 0x01,    // Firmware Minor Version
+  STS_MODEL_MAJ = 0x03,  // Model Version Major
+  STS_MODEL_SUB = 0x04,  // Model Version Minor
+  STS_DEVID = 0x05,      // Device ID
+  STS_BAUD_RATE = 0x06,  // Baud Rate (See `sts_baud_rate_e`)
+  STS_RSP_DELAY = 0x07,
+  STS_RSP_MODE = 0x08,
+  STS_MIN_ANGLE = 0x09,
+  STS_MAX_ANGLE = 0x0B,
+  STS_MAX_TEMP = 0x0D,
+  STS_MAX_VOLT = 0x0E,
+  STS_MIN_VOLT = 0x0F,
+  STS_MAX_TORQUE = 0x10,
+  PHASE = 0x12,
+  STS_UNLOAD_CONDITION = 0x13,
+  STS_ALARM_CONDITION = 0x14,
+  STS_COEF_P = 0x15,
+  STS_COEF_D = 0x16,
+  STS_COEF_I = 0x17,
+  STS_STARTING_FORCE = 0x18,
+  STS_CW_DEADBAND = 0x1A,
+  STS_CCW_DEADBAND = 0x1B,
+  STS_CURRENT_LIMIT = 0x1C,
+  STS_ANGLE_RES = 0x1E,
+  STS_POS_OFFSET = 0x1F,
+  STS_MOVE_MODE = 0x21,
+  STS_PROTECTION_TORQUE = 0x22,
+  STS_PROTECTION_TIME = 0x23,
+  STS_OVERLOAD_TORQUE = 0x24,
+  STS_COEF_P_CLOSED = 0x25,
+  STS_OVERCURRENT_TIME = 0x26,
+  STS_COEF_I_CLOSED = 0x27,
+  STS_TORQUE_EN = 0x28,
+  STS_TARGET_ACCEL = 0x29,
+  STS_TARGET_POS =
+      0x2A,  // controls position/steps in position/step control mode
+  STS_TARGET_TIME = 0x2C,   // controlls time param in open loop pwm mode
+  STS_TARGET_SPEED = 0x2E,  // Controls speed in constant speed mode
+  STS_TORQUE_LIMIT = 0x30,
+  STS_EEPROM_LOCK = 0x37,
+  STS_POSITION = 0x38,
+  STS_SPEED = 0x3A,
+  STS_LOAD = 0x3C,
+  STS_VOLTAGE = 0x3E,
+  STS_TEMPERATURE = 0x3F,
+  STS_ASYNC_WRITE_FLAG = 0x40,
+  STS_STATUS = 0x41,
+  STS_MOVING_FLAG = 0x42,
+  STS_CURRENT = 0x45
 } sts_reg_addr_e;
 
 #endif  // STSERVODEFINES__H
