@@ -25,60 +25,51 @@
 #include <cstdint>
 #include <span>
 
+#include "ServoUtils.h"
+
 class ServoBus {
- protected:
-  static constexpr const char LOG_TAG[] = "ServoBus";
-  bool m_initialized;  // True when the Bus has been initialized.
-
-  const uart_port_t m_uart_num;  // The UART peripheral id
-  const gpio_num_t m_tx_pin;     // The TX GPIO Pin
-  const gpio_num_t m_rx_pin;     // The RX GPIO Pin
-
-  const int m_baud_rate;         // Baud Rate
-  const int m_rx_buffer_size;    // RX Buffer Size
-  const int m_tx_buffer_size;    // TX Buffer Size
-  const int m_intr_alloc_flags;  // UART INTR Alloc Flags
-
-  const gpio_mode_t m_tx_mode;  // TX Pin Direction / Mode
-  const gpio_pullup_t m_tx_pu;  // TX Pullup Enabled
-  const gpio_pullup_t m_rx_pu;  // RX Pullup Enabled
-
  public:
-  ServoBus(uart_port_t uart_num, gpio_num_t tx_pin, gpio_num_t rx_pin,
-           int baud_rate = 115200, int rx_buffer_size = -1,
-           int tx_buffer_size = 0, int intr_alloc_flags = 0,
-           gpio_mode_t tx_mode = GPIO_MODE_OUTPUT_OD,
-           gpio_pullup_t tx_pu = GPIO_PULLUP_ENABLE,
-           gpio_pullup_t rx_pu = GPIO_PULLUP_ENABLE);
+  static constexpr char LOG_TAG[] = "ServoBus";
+
+  ServoBus(uart_port_t uart_num, gpio_num_t tx_pin, gpio_num_t rx_pin, int baud_rate = 115200, int rx_buffer_size = -1,
+           int tx_buffer_size = 0, int intr_alloc_flags = 0, gpio_mode_t tx_mode = GPIO_MODE_OUTPUT_OD,
+           gpio_pullup_t tx_pu = GPIO_PULLUP_ENABLE, gpio_pullup_t rx_pu = GPIO_PULLUP_ENABLE);
 
   int initialize();
   int close();
 
+  /** Enables/Disables the reciever
+   *  @param enable True to enable, false to disable
+   */
   int enable_rx(bool enable);
 
-  // Write bytes to the bus, block until the bytes are written or timeout
-  // expires.
-  //@param data Pointer to the buffer containing the data to be written.
-  //@param size Number of bytes to write.
-  //@param timeout Timeout in ticks or 0 for non-blocking
-  //@return The number of bytes written or ESP_FAIL on error.
-  int write_bytes(const std::span<const uint8_t>, uint32_t timeout = 0);
-  int flush_output(uint32_t timeout);
+  /** Write bytes to the bus, block until the bytes are written or timeout expires.
+   *  @param data buffer to write.
+   *  @param timeout Timeout in ticks or 0 for non-blocking
+   *  @return The number of bytes written or ESP_FAIL on error.
+   */
+  int write_bytes(const buffer_const_t, timeout_duration_t timeout = timeout_duration_t::max());
 
-  // Read bytes from the bus, block until the sync pattern is found or timeout
-  // expires.
-  //@param data buffercontaining the the sync pattern
-  //@param timeout Timeout in ticks to wait for the sync operation to complete.
-  //@return ESP_OK on success, ESP_FAIL on error.
-  int read_sync(const std::span<const uint8_t> pattern, uint32_t timeout);
+  /** Block until all tx data has been transmitted
+   *  @param timeout Timeout in ticks
+   */
+  int flush_output(timeout_duration_t timeout);
 
-  // Read bytes from the bus, block until the bytes are read or timeout expires.
-  //@param data Pointer to the buffer where the read data will be stored.
-  //@param size Number of bytes to read.
-  //@param timeout Timeout in ticks to wait for the read operation to complete.
-  //@return The number of bytes read or ESP_FAIL on error.
-  int read_bytes(const std::span<uint8_t> data, uint32_t timeout);
+  /** Read bytes from the bus, block until pattern is found or timeout expires.
+   *  @param pattern buffer containing the the sync pattern
+   *  @param timeout Timeout in ticks to wait for the sync operation to complete.
+   *  @return ESP_OK on success, ESP_FAIL on error.
+   */
+  int read_sync(const buffer_const_t pattern, timeout_duration_t timeout);
 
+  /** Read bytes from the bus, block until the bytes are read or timeout expires.
+   *  @param data The buffer where the read data will be stored.
+   *  @param timeout Timeout in ticks to wait for the read operation to complete.
+   *  @return The number of bytes read or ESP_FAIL on error.
+   */
+  int read_bytes(const buffer_t data, timeout_duration_t timeout);
+
+  /** Discards all buffered rx data */
   int discard_input();
 
   ~ServoBus();
@@ -98,13 +89,20 @@ class ServoBus {
   int initialize_uart();
   int initialize_gpio();
 
-  struct SyncState {
-    const std::span<const uint8_t> sync_pattern;
-    uint8_t match_index;
-    size_t read_bytes;
-  };
+  bool m_initialized;  //!< @brief True when the Bus has been initialized.
 
-  bool read_sync_raw(SyncState& sync_statem, uint32_t timeout);
+  const uart_port_t m_uart_num;  //!< The UART peripheral id
+  const gpio_num_t m_tx_pin;     //!< The TX GPIO Pin
+  const gpio_num_t m_rx_pin;     //!< The RX GPIO Pin
+
+  const int m_baud_rate;         //!< Baud Rate
+  const int m_rx_buffer_size;    //!< RX Buffer Size
+  const int m_tx_buffer_size;    //!< TX Buffer Size
+  const int m_intr_alloc_flags;  //!< UART INTR Alloc Flags
+
+  const gpio_mode_t m_tx_mode;  //!< TX Pin Direction / Mode
+  const gpio_pullup_t m_tx_pu;  //!< TX Pullup Enabled
+  const gpio_pullup_t m_rx_pu;  //!< RX Pullup Enabled
 };
 
 #endif  // SERVO_BUS__H

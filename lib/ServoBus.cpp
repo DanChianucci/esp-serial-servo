@@ -14,10 +14,9 @@ int default_rx_buffer_size(int uart_num, int rx_buffer_size) {
     return rx_buffer_size;
 }
 
-ServoBus::ServoBus(uart_port_t uart_num, gpio_num_t tx_pin, gpio_num_t rx_pin,
-                   int baud_rate, int rx_buffer_size, int tx_buffer_size,
-                   int intr_alloc_flags, gpio_mode_t tx_mode,
-                   gpio_pullup_t tx_pu, gpio_pullup_t rx_pu)
+ServoBus::ServoBus(uart_port_t uart_num, gpio_num_t tx_pin, gpio_num_t rx_pin, int baud_rate, int rx_buffer_size,
+                   int tx_buffer_size, int intr_alloc_flags, gpio_mode_t tx_mode, gpio_pullup_t tx_pu,
+                   gpio_pullup_t rx_pu)
     : m_initialized(false),
       m_uart_num(uart_num),
       m_tx_pin(tx_pin),
@@ -26,16 +25,13 @@ ServoBus::ServoBus(uart_port_t uart_num, gpio_num_t tx_pin, gpio_num_t rx_pin,
       m_rx_buffer_size(default_rx_buffer_size(uart_num, rx_buffer_size)),
       m_tx_buffer_size(tx_buffer_size),
       m_intr_alloc_flags(intr_alloc_flags),
-      m_tx_mode(tx_pin != rx_pin ? tx_mode
-                                 : (gpio_mode_t)(tx_mode | GPIO_MODE_INPUT)),
+      m_tx_mode(tx_pin != rx_pin ? tx_mode : (gpio_mode_t)(tx_mode | GPIO_MODE_INPUT)),
       m_tx_pu(tx_pu),
       m_rx_pu(rx_pu) {}
 
 int ServoBus::initialize() {
-  ESP_RETURN_ON_ERROR(uart_is_driver_installed(m_uart_num), LOG_TAG,
-                      "Uart Driver already installed on m_uart_num");
-  ESP_RETURN_ON_FALSE(!m_initialized, ESP_FAIL, LOG_TAG,
-                      "ServoBus has already been initialized");
+  ESP_RETURN_ON_ERROR(uart_is_driver_installed(m_uart_num), LOG_TAG, "Uart Driver already installed on m_uart_num");
+  ESP_RETURN_ON_FALSE(!m_initialized, ESP_FAIL, LOG_TAG, "ServoBus has already been initialized");
 
   initialize_gpio();
   initialize_uart();
@@ -56,9 +52,7 @@ int ServoBus::initialize_uart() {
 
   // Configure the UART Peripheral
   ESP_ERROR_CHECK(uart_param_config(m_uart_num, &uart_config));
-  ESP_ERROR_CHECK(uart_driver_install(m_uart_num, m_rx_buffer_size,
-                                      m_tx_buffer_size, 0, NULL,
-                                      m_intr_alloc_flags));
+  ESP_ERROR_CHECK(uart_driver_install(m_uart_num, m_rx_buffer_size, m_tx_buffer_size, 0, NULL, m_intr_alloc_flags));
   return ESP_OK;
 }
 
@@ -112,30 +106,23 @@ int ServoBus::enable_rx(bool enable) {
     return uart_disable_rx_intr(m_uart_num);
 }
 
-int ServoBus::flush_output(uint32_t timeout) {
-  int result = uart_wait_tx_done(m_uart_num, timeout);
-  if (result != ESP_OK) ESP_LOGE(LOG_TAG, "Failed to flush output");
-  return result;
-}
-
 int ServoBus::discard_input() {
   int result = uart_flush_input(m_uart_num);
   if (result != ESP_OK) ESP_LOGE(LOG_TAG, "Failed to flush input");
   return result;
 }
 
-int ServoBus::read_sync(const std::span<const uint8_t> pattern,
-                        uint32_t timeout) {
+int ServoBus::read_sync(const buffer_const_t pattern, timeout_duration_t timeout) {
   size_t match_index = 0;
   int bytes_read = 0;
-  uint32_t ticks_to_wait = timeout;
+  timeout_duration_t remaining;
 
-  TimeOut_t xTimeOut;
-  vTaskSetTimeOutState(&xTimeOut);
+  timeout_ctrl_t timeout_ctrl;
+  init_timeout_ctrl(&timeout_ctrl);
 
   uint8_t byte[1];
   while (match_index < pattern.size()) {
-    int len = read_bytes(std::span<uint8_t>(byte), ticks_to_wait);
+    int len = read_bytes(buffer_t(byte), remaining);
     bytes_read += len;
     if (len > 0) {
       if (*byte == pattern[match_index])
@@ -143,38 +130,41 @@ int ServoBus::read_sync(const std::span<const uint8_t> pattern,
       else
         match_index = 0;
     }
-    bool timed_out = xTaskCheckForTimeOut(&xTimeOut, &ticks_to_wait) == pdTRUE;
-    ESP_RETURN_ON_FALSE(!timed_out, ESP_FAIL, LOG_TAG,
-                        "Timeout waiting for sync pattern");
+    bool timed_out = update_timeout(&timeout_ctrl, &remaining) == pdTRUE;
+    ESP_RETURN_ON_FALSE(!timed_out, ESP_FAIL, LOG_TAG, "Timeout waiting for sync pattern");
   }
   ESP_LOGD(LOG_TAG, "read_sync: read %d bytes before sync", bytes_read);
   return ESP_OK;
 }
 
-int ServoBus::read_bytes(const std::span<uint8_t> data, uint32_t timeout) {
-  int result = uart_read_bytes(m_uart_num, data.data(), data.size(), timeout);
+int ServoBus::read_bytes(const buffer_t data, timeout_duration_t timeout) {
+  uint32_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count();
+  int result = uart_read_bytes(m_uart_num, data.data(), data.size(), pdMS_TO_TICKS(ms));
 
-  ESP_LOGV(LOG_TAG, "read_bytes(%p, %u, %lu)", data.data(), data.size(),
-           timeout);
+  ESP_LOGV(LOG_TAG, "read_bytes(%p, %u)", data.data(), data.size());
   ESP_LOG_BUFFER_HEXDUMP(LOG_TAG, data.data(), result, ESP_LOG_VERBOSE);
   ESP_RETURN_ON_FALSE(result >= 0, ESP_FAIL, LOG_TAG, "Failed to read bytes");
   return result;
 }
 
-int ServoBus::write_bytes(const std::span<const uint8_t> data,
-                          uint32_t timeout) {
-  ESP_LOGV(LOG_TAG, "write_bytes(%p, %u, %lu)", data.data(), data.size(),
-           timeout);
+int ServoBus::write_bytes(const buffer_const_t data, timeout_duration_t timeout) {
+  ESP_LOGV(LOG_TAG, "write_bytes(%p, %u)", data.data(), data.size());
   ESP_LOG_BUFFER_HEXDUMP(LOG_TAG, data.data(), data.size(), ESP_LOG_VERBOSE);
 
   int result = uart_write_bytes(m_uart_num, data.data(), data.size());
   ESP_RETURN_ON_FALSE(result >= 0, ESP_FAIL, LOG_TAG, "Failed to write bytes");
 
-  if (timeout > 0) {
-    int wait_res = uart_wait_tx_done(m_uart_num, timeout);
-    ESP_RETURN_ON_FALSE(wait_res == ESP_OK, ESP_FAIL, LOG_TAG,
-                        "Failed to wait for tx done");
+  if (timeout > timeout_duration_t::zero()) {
+    int wait_res = flush_output(timeout);
+    ESP_RETURN_ON_FALSE(wait_res == ESP_OK, ESP_FAIL, LOG_TAG, "Failed to wait for tx done");
   }
+  return result;
+}
+
+int ServoBus::flush_output(timeout_duration_t timeout) {
+  uint32_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count();
+  int result = uart_wait_tx_done(m_uart_num, pdMS_TO_TICKS(ms));
+  if (result != ESP_OK) ESP_LOGE(LOG_TAG, "Failed to flush output");
   return result;
 }
 

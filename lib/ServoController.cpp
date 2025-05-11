@@ -1,40 +1,17 @@
 
 #include "ServoController.h"
 
-#include <esp_check.h>
-#include <esp_err.h>
-#include <esp_log.h>
-#include <freertos/FreeRTOS.h>
+#include "ServoUtils.h"
 
-ServoController::ServoController(ServoBus* bus, uint32_t tx_timeout_ticks,
-                                 uint32_t rx_timeout_ticks,
+ServoController::ServoController(ServoBus* bus, timeout_duration_t tx_timeout, timeout_duration_t rx_timeout,
                                  int auto_disable_rx) {
   m_servo_bus = bus;
-  m_transmit_timeout = tx_timeout_ticks;
-  m_response_timeout = rx_timeout_ticks;
-  m_auto_disable_rx = auto_disable_rx >= 0
-                          ? (auto_disable_rx != 0)
-                          : (bus->get_tx_pin() == bus->get_rx_pin());
+  m_transmit_timeout = tx_timeout;
+  m_response_timeout = rx_timeout;
+  m_auto_disable_rx = auto_disable_rx >= 0 ? (auto_disable_rx != 0) : (bus->get_tx_pin() == bus->get_rx_pin());
 }
 
-int ServoController::send_command(ServoPacket* command) {
-  return send_raw_command(command->as_bytes());
-}
-int ServoController::read_response(ServoPacket* response) {
-  response->reset();
-
-  int size = read_raw_response(response->sync_buffer(), response->data_buffer(),
-                               response->len_index());
-  if (size == ESP_FAIL) return ESP_FAIL;
-
-  response->resize(size);
-  return size;
-}
-
-int ServoController::send_raw_command(const std::span<const uint8_t> data) {
-  ESP_LOGD(LOG_TAG, "send_raw_command: ");
-  ESP_LOG_BUFFER_HEXDUMP(LOG_TAG, data.data(), data.size(), ESP_LOG_DEBUG);
-
+int ServoController::send_command(const buffer_const_t data) {
   if (m_auto_disable_rx) m_servo_bus->enable_rx(false);
   int ret = m_servo_bus->write_bytes(data, m_transmit_timeout);
   if (m_auto_disable_rx) m_servo_bus->enable_rx(true);
@@ -42,64 +19,53 @@ int ServoController::send_raw_command(const std::span<const uint8_t> data) {
   return ret;
 };
 
-// TODO FAIL if read less than requested.
-// TODO Fail if packet doesn't have size info
-// TODO consolodate the 3 sections
-int ServoController::read_raw_response(
-    const std::span<const uint8_t> sync_buffer,
-    const std::span<uint8_t>& data_buffer, size_t len_pos) {
-  ESP_LOGD(LOG_TAG, "read_raw_rsp: ");
-  ESP_LOG_BUFFER_HEXDUMP(LOG_TAG, sync_buffer.data(), sync_buffer.size(),
-                         ESP_LOG_DEBUG);
+int ServoController::send_command(ServoPacket* command) { return send_command(command->as_bytes()); }
 
-  esp_err_t stat;
+int ServoController::read_response(const buffer_t& buffer, size_t readlen, timeout_duration_t timeout) {
+  if (readlen > buffer.size()) return SRV_OVERFLOW;
+  if (timeout == timeout_duration_t::zero()) timeout = m_response_timeout;
+  return this->m_servo_bus->read_bytes(buffer.first(readlen), timeout);
+}
 
+int ServoController::read_response(ServoPacket* response) {
+  response->reset();
+
+  int size = read_raw_response(response->sync_buffer(), response->data_buffer(), response->len_index());
+  SRV_RETURN_ON_ERR(size);
+
+  response->resize(size);
+  return size;
+}
+
+int ServoController::sync_response(const buffer_const_t& sync_pattern, timeout_duration_t timeout) {
+  if (timeout == timeout_duration_t::zero()) timeout = m_response_timeout;
+  SRV_RETURN_ON_ERR(this->m_servo_bus->read_sync(sync_pattern, timeout));
+  return SRV_OK;
+}
+
+int ServoController::read_raw_response(const buffer_const_t sync_buffer, const buffer_t& data_buffer, size_t len_pos) {
   size_t readlen = 0;
   size_t pktlen = 0;
-  TickType_t ticks_to_wait = m_response_timeout;
+  timeout_duration_t remaining = m_response_timeout;
 
-  TimeOut_t xTimeOut;
-  vTaskSetTimeOutState(&xTimeOut);
+  timeout_ctrl_t timeout_ctrl;
+  init_timeout_ctrl(&timeout_ctrl);
 
   // 1. Read until sync pattern is found
-  stat = this->m_servo_bus->read_sync(sync_buffer, ticks_to_wait);
-  ESP_RETURN_ON_FALSE(stat != ESP_FAIL, ESP_FAIL, LOG_TAG,
-                      "Failed to read sync pattern");
-  stat = xTaskCheckForTimeOut(&xTimeOut, &ticks_to_wait);
-  ESP_RETURN_ON_FALSE(stat == pdFALSE, ESP_FAIL, LOG_TAG,
-                      "Timeout waiting for sync pattern");
+  SRV_RETURN_ON_ERR(sync_response(sync_buffer, remaining));
+  SRV_RETURN_IF(update_timeout(&timeout_ctrl, &remaining), SRV_TIMEOUT);
 
   // 2. Read dev id, length
   readlen = (len_pos + 1);
-  if ((pktlen + readlen) > data_buffer.size())
-    readlen = data_buffer.size() - pktlen;
-  if (readlen > 0) {
-    stat = this->m_servo_bus->read_bytes(data_buffer.subspan(pktlen, readlen),
-                                         ticks_to_wait);
-    ESP_RETURN_ON_FALSE(stat != ESP_FAIL, ESP_FAIL, LOG_TAG,
-                        "Failed to read packet header");
-    stat = xTaskCheckForTimeOut(&xTimeOut, &ticks_to_wait);
-    ESP_RETURN_ON_FALSE(stat == pdFALSE, ESP_FAIL, LOG_TAG,
-                        "Timeout waiting for packet header");
-    pktlen += readlen;
-  }
+  SRV_RETURN_ON_ERR(read_response(data_buffer.subspan(pktlen), readlen, remaining));
+  SRV_RETURN_IF(update_timeout(&timeout_ctrl, &remaining), SRV_TIMEOUT);
+  pktlen += readlen;
 
   // 3. Read until checksum is found
   readlen = data_buffer[len_pos];
-  if ((pktlen + readlen) > data_buffer.size())
-    readlen = data_buffer.size() - pktlen;
-  if (readlen > 0) {
-    stat = this->m_servo_bus->read_bytes(data_buffer.subspan(pktlen, readlen),
-                                         ticks_to_wait);
-    ESP_RETURN_ON_FALSE(stat != ESP_FAIL, ESP_FAIL, LOG_TAG,
-                        "Failed to read packet contents");
-    stat = xTaskCheckForTimeOut(&xTimeOut, &ticks_to_wait);
-    ESP_RETURN_ON_FALSE(stat == pdFALSE, ESP_FAIL, LOG_TAG,
-                        "Timeout waiting for packet contents");
-    pktlen += readlen;
-  }
-  ESP_LOGD(LOG_TAG, "read_raw_rsp: ");
-  ESP_LOG_BUFFER_HEXDUMP(LOG_TAG, data_buffer.data(), pktlen, ESP_LOG_DEBUG);
+  SRV_RETURN_ON_ERR(read_response(data_buffer.subspan(pktlen), readlen, remaining));
+  SRV_RETURN_IF(update_timeout(&timeout_ctrl, &remaining), SRV_TIMEOUT);
+  pktlen += readlen;
 
   return pktlen + sync_buffer.size();
 }

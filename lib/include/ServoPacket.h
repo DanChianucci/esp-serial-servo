@@ -3,10 +3,11 @@
 #include <cstdint>
 #include <span>
 
+#include "ServoUtils.h"
+
 class ServoPacket {
  public:
-  typedef std::span<uint8_t> buffer_t;
-  typedef std::span<const uint8_t> buffer_const_t;
+  static constexpr char LOG_TAG[] = "ServoPacket";
 
   ServoPacket() = default;
   ServoPacket(const buffer_t& buffer);
@@ -22,7 +23,7 @@ class ServoPacket {
   virtual bool is_well_formed();
 
   // Resets the packet to a known state containing only the sync header
-  virtual void reset();
+  virtual int reset();
 
   // The maximum capacity of the raw buffer
   virtual size_t capacity();
@@ -34,13 +35,12 @@ class ServoPacket {
   virtual size_t size();
 
   // Updates the size of the stored packet. does not alter any bytes
-  virtual void resize(size_t size);
+  virtual int resize(size_t size);
 
   // Returns a view of the packet as a sequence of bytes
   virtual buffer_const_t as_bytes();
 
  protected:
-  static constexpr const char LOG_TAG[] = "ServoPacket";
   buffer_t m_buffer;
   size_t m_size;
 };

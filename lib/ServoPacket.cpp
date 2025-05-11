@@ -1,8 +1,6 @@
 #include "ServoPacket.h"
 
 #include <utility>
-typedef ServoPacket::buffer_t buffer_t;
-typedef ServoPacket::buffer_const_t buffer_const_t;
 
 ServoPacket::ServoPacket(const buffer_t& buffer) {
   m_buffer = buffer;
@@ -10,10 +8,16 @@ ServoPacket::ServoPacket(const buffer_t& buffer) {
 }
 
 bool ServoPacket::is_well_formed() { return m_size > 0; }
-void ServoPacket::reset() { m_size = 0; }
+int ServoPacket::reset() {
+  m_size = 0;
+  return SRV_OK;
+}
 
-// TODO check capacity
-void ServoPacket::resize(size_t size) { m_size = size; }
+int ServoPacket::resize(size_t size) {
+  if (size > m_buffer.size()) return SRV_OVERFLOW;
+  m_size = size;
+  return SRV_OK;
+}
 
 size_t ServoPacket::capacity() { return m_buffer.size(); }
 size_t ServoPacket::size() { return m_size; }
