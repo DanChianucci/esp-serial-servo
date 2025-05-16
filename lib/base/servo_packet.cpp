@@ -9,13 +9,6 @@ ServoPacket::ServoPacket(const buffer_t& buffer) {
   m_size = 0;
 }
 
-bool ServoPacket::is_well_formed() { return m_size > 0; }
-
-srv_stat_t ServoPacket::reset() {
-  m_size = 0;
-  return SRV_OK;
-}
-
 srv_stat_t ServoPacket::resize(size_t size) {
   SRV_RETURN_IF(capacity() < size, SRV_OVERFLOW);
   m_size = size;

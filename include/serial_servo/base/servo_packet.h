@@ -10,7 +10,7 @@ class ServoPacket {
  public:
   static constexpr char LOG_TAG[] = "ServoPacket";
 
-  ServoPacket() = default;
+  ServoPacket() = delete;
   ServoPacket(const buffer_t& buffer);
 
   // returns a view into the packet buffer sync_header
@@ -23,12 +23,12 @@ class ServoPacket {
   /** Determines if the packet is valid
    * @return true if the packet is well formed and internally consistant
    */
-  virtual bool is_well_formed();
+  virtual bool is_well_formed()=0;
 
   /** Resets the packet to a known state containing only the sync header
    * @return SRV_OK always.
    */
-  virtual srv_stat_t reset();
+  virtual srv_stat_t reset()=0;
 
   /** Updates the size of the stored packet. does not alter any bytes
    * @return SRV_OK on success.

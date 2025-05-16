@@ -29,19 +29,6 @@ class ServoBus {
  public:
   static constexpr char LOG_TAG[] = "ServoBus";
 
-  /** Sets up GPIO, installs UART Driver
-   *  @return SRV_OK on success.
-   *  @return SRV_PARAM_ERR on parameter errors.
-   *  @return SRV_FAIL if already initialized or uart is already installed.
-   */
-  virtual srv_stat_t initialize()=0;
-
-  /** Resets GPIO and uninstall uart driver
-   * @return SRV_OK on success
-   * @return SRV_PARAM_ERR on parameter error
-   */
-  virtual srv_stat_t close()=0;
-
   /** Enables/Disables the reciever
    *  @param enable True to enable, false to disable
    *  @return SRV_OK on success.

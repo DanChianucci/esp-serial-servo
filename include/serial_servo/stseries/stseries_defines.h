@@ -13,11 +13,11 @@ constexpr uint16_t SYNC_PATTERN = 0xFFFF;    // Sync Pattern for ST servos
 constexpr uint8_t MAX_ID = 0xFC;             // Maximum usable Device ID
 constexpr uint8_t BROADCAST_ID = 0xFE;       // Broadcast ID (no response)
 
-constexpr uint8_t SYNC_IDX = 0;
-constexpr uint8_t DEVID_IDX = 2;
+constexpr uint8_t SYNC_IDX   = 0;
+constexpr uint8_t DEVID_IDX  = 2;
 constexpr uint8_t LENGTH_IDX = 3;
-constexpr uint8_t CODE_IDX = 4;
-constexpr uint8_t DATA_IDX = 5;
+constexpr uint8_t CODE_IDX   = 4;
+constexpr uint8_t DATA_IDX   = 5;
 
 constexpr uint8_t NUM_SYNC_BYTES   = 2;
 constexpr uint8_t NUM_DEVID_BYTES  = 1;
@@ -46,7 +46,7 @@ typedef enum {
   STAT_SENSOR = 1 << 1,       // Sensor Error
   STAT_TEMPERATURE = 1 << 2,  // Temperature Error
   STAT_CURRENT = 1 << 3,      // Current Error
-  STAT_ANGLE = 1 << 3,        // Angle Error
+  STAT_ANGLE = 1 << 4,        // Angle Error
   STAT_OVERLOAD = 1 << 5      // Overload Error
 } err_code_t;
 
