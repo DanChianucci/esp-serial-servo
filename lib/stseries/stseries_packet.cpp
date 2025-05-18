@@ -23,7 +23,7 @@ STSeriesPacket::STSeriesPacket(const buffer_t& buffer) : ServoPacket(buffer) {
 }
 
 
-uint8_t STSeriesPacket::len_index() { return LENGTH_IDX; };
+uint8_t STSeriesPacket::len_index() { return LENGTH_IDX-NUM_SYNC_BYTES; };
 uint8_t STSeriesPacket::checksum_index() { return (m_size > 0) ? (m_size - 1) : 0; };
 uint8_t STSeriesPacket::data_size() { return (m_size >= NUM_META_BYTES) ? (m_size - NUM_META_BYTES) : 0; }
 

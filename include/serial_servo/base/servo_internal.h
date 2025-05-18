@@ -35,9 +35,9 @@ inline void init_timeout_ctrl(timeout_ctrl_t* ctrl) { *ctrl = std::chrono::stead
  * @return FALSE if the timeout still has remaining time
  */
 inline bool update_timeout(timeout_ctrl_t* ctrl, timeout_duration_t* remaining) {
+  #ifdef DISABLE_SRV_TIMEOUTS
   timeout_ctrl_t now = std::chrono::steady_clock::now();
   timeout_ctrl_t::duration elapsed = now - (*ctrl);
-
   if (elapsed < *remaining) {
     *remaining -= elapsed;
     *ctrl = now;
@@ -46,6 +46,9 @@ inline bool update_timeout(timeout_ctrl_t* ctrl, timeout_duration_t* remaining) 
     *remaining = timeout_ctrl_t::duration::zero();
     return true;
   }
+  #else
+    return false;
+  #endif
 }
 }  // namespace timeout
 }  // namespace esp_serial_servo
