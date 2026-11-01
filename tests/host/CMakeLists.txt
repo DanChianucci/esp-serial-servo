@@ -72,5 +72,11 @@ target_include_directories(test_sts_generic PRIVATE
 target_compile_options(test_sts_generic PRIVATE -Wall -Wextra)
 add_test(NAME test_sts_generic COMMAND test_sts_generic)
 
+add_executable(test_deadline test_deadline.cpp)
+target_include_directories(test_deadline PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../include)
+target_compile_options(test_deadline PRIVATE -Wall -Wextra)
+add_test(NAME test_deadline COMMAND test_deadline)
+
 # Examples (one per access tier) built and run with the tests.
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../examples ${CMAKE_BINARY_DIR}/exbin)

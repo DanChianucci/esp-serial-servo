@@ -693,12 +693,23 @@ under `ESP_PLATFORM` or `SERVOKIT_IMPL_ESP`).
   `get_rx_buffer_size()`, `get_tx_buffer_size()`, `get_intr_alloc_flags()`,
   `get_tx_od()`, `get_tx_pu()`, `get_rx_pu()`. No bus access.
 
-Known limitation: `ESPSerialPort::read_sync()` re-arms the full timeout on
-every read and only counts time down when the build defines
-`DISABLE_SRV_TIMEOUTS`. In a default build, a bus that stays silent does not
-make `read_sync()` return `SRV_TIMEOUT`, so a transaction on an unresponsive
-servo is not bounded by the transaction budget on ESP-IDF. The host `SerialPort`
-fake does not show this.
+Timeouts: every blocking `ESPSerialPort` method takes a deadline from a
+monotonic clock when it is called (`serial/deadline.h`) and stops waiting when
+it passes. The deadline does not depend on how many reads it takes, so
+`read_sync()` returns `SRV_TIMEOUT` on a silent bus after `timeout` in total.
+A zero or negative `timeout` still makes one non-blocking attempt. A `timeout`
+too large to represent never expires.
+
+- `read_sync`, `read_bytes`: wait on the UART driver for the time left.
+  `read_bytes` returns the bytes read so far (possibly fewer than requested,
+  or 0) when the deadline passes.
+- `write_bytes`: the deadline also bounds the wait for transmission, which
+  happens only for a positive `timeout`.
+- `flush_output`: `SRV_TIMEOUT` when transmission is not done by the deadline.
+- Tick conversion: the driver takes waits in RTOS ticks. The time left is
+  rounded up to whole milliseconds and then up to whole ticks
+  (`portTICK_PERIOD_MS`), capped below `portMAX_DELAY`, so a wait never ends
+  before the deadline and can overrun it by less than one tick.
 
 ## Hardware-verification list
 
