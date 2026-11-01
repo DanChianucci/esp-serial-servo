@@ -10,6 +10,7 @@
   #include "servokit/core/servo_types.h"
   #include "servokit/core/register_access.h"
   #include "servokit/core/servo.h"
+  #include "servokit/core/persist_scope.h"
 
   #include "servokit/families/stseries.h"
 

@@ -125,7 +125,7 @@ layer.
   left in the budget, so a slow send shortens the receive window.
 - When the budget is spent the call returns `TIMEOUT`.
 - A transaction that needs a read-back (readback check) or two frames
-  (`hold()`, `prepare()`, `set_multiturn_feedback()`) takes one budget per
+  (`cancel_motion()` takes three frames; `set_multiturn_feedback()` two) takes one budget per
   frame.
 - There are no retries anywhere. To retry, the caller repeats the call a
   count of its own choosing.
@@ -194,22 +194,22 @@ thing; a method whose feature is absent returns `UNSUPPORTED`. Check
 
 Features: `ABSOLUTE_POSITION`, `MULTI_TURN_POS`, `RELATIVE_POSITION`,
 `CONTINUOUS_ROTATION`, `PWM_DRIVE`, `SET_SPEED`, `SET_ACCEL`, `TORQUE_LIMIT`,
-`CURRENT_LIMIT`, `START_TORQUE`, `TORQUE_ENABLE`, `HOLD`, `POSITION_GAINS`,
+`CURRENT_LIMIT`, `START_TORQUE`, `TORQUE_ENABLE`, `CANCEL_MOTION`, `POSITION_GAINS`,
 `DEADZONE`, `ANGLE_LIMITS`, `POSITION_OFFSET`, `READ_POSITION`, `READ_SPEED`,
 `READ_CURRENT`, `READ_LOAD`, `READ_VOLTAGE`, `READ_TEMPERATURE`,
 `READ_MOVING`, `READ_ALARMS`, `PROTECT_CURRENT`, `PROTECT_OVERLOAD`,
-`PROTECT_TEMP`, `PROTECT_VOLTAGE`, `PROTECT_RELEASE_ON_ALARM`, `PING`,
-`READ_IDENTITY`, `SET_ID`, `SET_BAUD`, `SYNC_WRITE`, `SYNC_READ`,
+`PROTECT_TEMP`, `PROTECT_VOLTAGE`, `PROTECT_RELEASE_ON_ALARM`, `PROBE`,
+`IDENTIFY`, `SET_ID`, `SET_BAUD`, `SYNC_WRITE`, `SYNC_READ`,
 `ASYNC_WRITE`, `BROADCAST`, `REGISTER_ACCESS` (`Servo::get_registers()` is non-null exactly when it is set),
 `RETAINS_POSITION_UNPOWERED`, `PERSIST_CONFIG` (`set_persist()` controls
 persistence), `READBACK_CHECK` (`RegisterAccess::set_readback_check()` is
 available).
 
 `STSServo::get_capabilities()` declares: `ABSOLUTE_POSITION`, `SET_SPEED`,
-`SET_ACCEL`, `TORQUE_LIMIT`, `START_TORQUE`, `TORQUE_ENABLE`, `HOLD`,
+`SET_ACCEL`, `TORQUE_LIMIT`, `START_TORQUE`, `TORQUE_ENABLE`, `CANCEL_MOTION`,
 `READ_POSITION`, `READ_CURRENT`, `READ_LOAD`, `READ_VOLTAGE`,
 `READ_TEMPERATURE`, `READ_MOVING`, `READ_ALARMS`, `PROTECT_CURRENT`,
-`PROTECT_TEMP`, `PROTECT_RELEASE_ON_ALARM`, `PING`, `READ_IDENTITY`,
+`PROTECT_OVERLOAD`, `PROTECT_TEMP`, `PROTECT_VOLTAGE`, `PROTECT_RELEASE_ON_ALARM`, `PROBE`, `IDENTIFY`,
 `REGISTER_ACCESS`, `PERSIST_CONFIG`, `READBACK_CHECK`. It does not declare
 `MULTI_TURN_POS` or `RETAINS_POSITION_UNPOWERED` (unverified on hardware), nor
 any feature without an implementation.
@@ -236,8 +236,7 @@ references; nothing blocks.
 | `Capabilities` | `features`, `limits` |
 | `Identity` | `family[16]` (NUL-terminated, owned, e.g. `"STS"`), `model_major`, `model_minor`, `firmware_major`, `firmware_minor`, `device_id` |
 | `Telemetry` | `position_mdeg`, `current_ma`, `temperature_c`, `alarms`; optional `load_valid`/`load_permille`, `voltage_valid`/`voltage_mv`, `moving_valid`/`moving` (read an optional field only when its flag is true) |
-| `Protection` | `stall_current_ma`, `stall_time_ms`, `max_temperature_c`, `release_on_alarm` |
-| `Profile` | `speed_mdeg_s`, `accel_mdeg_s2`, `torque_permille`, `start_torque_permille` (ignored without `START_TORQUE`) |
+| `MotionMode` | `ABSOLUTE_POSITION` |
 
 ## Servo (generic interface)
 
@@ -251,15 +250,41 @@ value). The destructor is virtual. The Servo does not own the bus.
 | `get_capabilities()` | Const; does not touch the bus. Static per model; an implementation may make it depend on a prior `identify()`. |
 | `probe()` | One transaction, no retries. |
 | `identify(Identity*)` | Family, model, firmware, device ID. |
-| `prepare()` | Puts the servo into absolute-target mode over the full domain. |
-| `set_protection(const Protection&)` | Programs servo-side protection thresholds; the servo enforces them itself. |
-| `set_profile(const Profile&)` | Speed, acceleration, torque for following moves; clamped to the limits. |
-| `hold()` | Stops and holds position (no coast). |
-| `set_torque(bool)` | Enables or disables motor torque. |
+| `set_mode(MotionMode)` | Selects the motion mode (`MotionMode::ABSOLUTE_POSITION`: absolute target over the full domain). A value that is not a `MotionMode` returns `OUT_OF_RANGE`. |
+| `set_protect_current(ma, time_ms)` | Current protection (`PROTECT_CURRENT`): threshold in mA and time above it in ms. |
+| `set_protect_overload(permille, time_ms)` | Overload protection (`PROTECT_OVERLOAD`): load threshold in permille and time above it in ms. |
+| `set_protect_temperature(c)` | Temperature trip threshold in degrees C (`PROTECT_TEMP`). |
+| `set_protect_voltage(min_mv, max_mv)` | Supply voltage window in mV (`PROTECT_VOLTAGE`); `min_mv` above `max_mv` is `OUT_OF_RANGE`. |
+| `set_protect_release_alarms(AlarmSet)` | Alarms that make the servo release torque (`PROTECT_RELEASE_ON_ALARM`). An alarm the servo has no setting for is `OUT_OF_RANGE`. |
+| `set_speed(mdeg_s)`, `set_acceleration(mdeg_s2)` | Speed and acceleration for following moves (`SET_SPEED`, `SET_ACCEL`). |
+| `set_torque_limit(permille)`, `set_start_torque(permille)` | Torque limit and starting torque (`TORQUE_LIMIT`, `START_TORQUE`). |
+| `cancel_motion()` | Cancels a move in progress (`CANCEL_MOTION`). On `OK` the servo is stationary, its target equals its position and torque is disabled. The servo is unpowered between the torque-off and the end of the sequence; nothing restores torque. |
+| `set_torque_enabled(bool)`, `read_torque_enabled(bool*)` | Enables or disables motor torque; reads the state (`TORQUE_ENABLE`). `read_torque_enabled` fills its output on `OK` only. |
 | `set_persist(bool)` | `true`: configuration writes made afterwards survive a power cycle; `false`: they take effect but are not kept. Applies until changed again; the library keeps no state. |
 | `read_telemetry(Telemetry*)` | One atomic sample, filled on `OK` only. |
 | `read_alarms(AlarmSet*)` | Active alarms. |
 | `clear_alarms()` | Clears latched alarms where supported. |
+
+Every protection and motion-parameter setter above is gated by its own
+feature and returns `UNSUPPORTED` (nothing sent) when that feature is absent,
+independent of the others. Arguments are validated first: an out-of-range value
+returns `OUT_OF_RANGE`, nothing is sent and nothing is clamped (callers clamp
+using `Limits`). Then plain writes are made. A setter that writes several
+registers stops at the first failed write and returns that write's `Result`;
+earlier writes of the same call may have applied. Conversions to native units
+round to nearest, halves away from zero.
+
+### PersistScope
+
+`class PersistScope` in `core/persist_scope.h` (header-only). The constructor
+takes a `Servo&` (borrowed; must outlive the guard) and calls
+`set_persist(true)`. Unlocking is explicit: `ok()` and `result()` report the
+unlock. The destructor calls `set_persist(false)` only if the unlock succeeded,
+so every exit path of the scope relocks; a relock failure in the destructor
+cannot be reported. `close()` relocks early, returns the relock `Result` and
+makes the destructor do nothing (it sends nothing and returns `OK` when the
+unlock failed or `close()` already ran). Not copyable, not movable, not
+thread-safe; blocking and timeouts are those of `set_persist()`.
 | `get_registers()` | Non-owning `RegisterAccess*`, valid for the lifetime of the `Servo`; `nullptr` by default. Non-null exactly when `Feature::REGISTER_ACCESS` is set. See [RegisterAccess](#registeraccess). |
 | `get_serial_link()` | Non-owning `SerialLink*`, valid for the lifetime of the `Servo`; `nullptr` by default (servos not on a checksummed serial link). See [SerialLink](#seriallink). |
 
@@ -307,10 +332,10 @@ servo, so servos sharing a controller share it. See
 implicit read-compare-write and no hidden read. A caller that wants to avoid
 a write reads first. The only helper that reads before writing is
 `STSServo::set_multiturn_feedback()` (it must preserve the other bits of
-`REG_PHASE`), and `hold()` reads the position it commands. Each typed setter
+`REG_PHASE`), and `cancel_motion()` reads the position it commands. Each typed setter
 performs exactly one register write (plus the read-back when the readback
-check is on). `set_protection()` and `set_profile()` perform several plain writes in a
-fixed order and stop at the first failure.
+check is on). `set_protect_current()`, `set_protect_overload()` and `set_protect_voltage()`
+perform two plain writes in a fixed order and stop at the first failure.
 
 **EEPROM persistence is explicit.** Whether a configuration write survives a
 power cycle is decided by `REG_EEPROM_LOCK` on the servo: lock off (0) stores
@@ -408,7 +433,7 @@ STS-specific rules:
 - **Words** are little endian (low byte at the lower register address).
 - **Status.** A reply whose status byte is non-zero makes the call return
   `BAD_RESPONSE`; the byte is available from `get_last_status()`. The exceptions
-  are `read_telemetry()`, `read_alarms()` and the position read of `hold()`,
+  are `read_telemetry()`, `read_alarms()` and the position read of `cancel_motion()`,
   which accept it and report the alarm.
 - **Response mode.** A servo whose `REG_RESPONSE_MODE` is `RSP_READ_PING` does
   not answer writes; write calls then return `TIMEOUT` although the write took
@@ -470,14 +495,12 @@ reset at power-up, "EEPROM" registers follow the lock.
 |---|---|
 | `get_operating_mode(op_mode_t*)` | `BAD_RESPONSE` if the stored value is not a mode. |
 | `set_operating_mode(op_mode_t)` | `OP_SERVO`..`OP_STEP`; others `OUT_OF_RANGE`. Decides how `REG_CTRL_*` are read. |
-| `get_response_mode(rsp_mode_t*)`, `set_response_mode(rsp_mode_t)` | `RSP_READ_PING` stops write acknowledgements. |
+| `get_response_mode(rsp_mode_t*)`, `set_response_mode(rsp_mode_t)` | `RSP_READ_PING` stops write acknowledgements. The firmware adapter must call `set_response_mode(STS::RSP_ALL)` at boot so that writes are acknowledged; no generic call does it. |
 | `get_response_delay(uint8_t*)`, `set_response_delay(delay_2us)` | Units of 2 us, 0..254. |
 | `get_servo_enabled(bool*)`, `set_servo_enabled(bool)` | Torque output on/off (SRAM). Never writes the mid-point calibration value. `get_servo_enabled` returns `BAD_RESPONSE` if the register holds neither 0 nor 1. |
-| `set_acceleration(accel)` | 0..254, units of 100 steps/s^2 (SRAM). |
-| `set_speed(steps_per_s)` | 0..3400, unsigned magnitude for position moves (SRAM). |
+| `set_acceleration_units(accel)` | 0..254, units of 100 steps/s^2 (SRAM). |
+| `set_speed_steps(steps_per_s)` | 0..3400, unsigned magnitude for position moves (SRAM). |
 | `set_signed_speed(steps_per_s)` | -3400..3400, bit 15 = reverse, for constant-speed mode (SRAM). |
-| `set_torque_limit(torque)` | 0..1000, 0.1 % (SRAM); reloaded from the stored maximum at power-up. |
-| `set_start_torque(torque)` | 0..1000, 0.1 % (EEPROM region). |
 | `set_target_position(steps)` | -30719..30719 steps, sign-magnitude, 4096 per revolution (SRAM). |
 | `get_eeprom_locked(bool*)` | `BAD_RESPONSE` if neither 0 nor 1. |
 | `unlock_eeprom()` | Writes lock = 0: EEPROM-region writes are stored. |
@@ -504,12 +527,18 @@ reset at power-up, "EEPROM" registers follow the lock.
 | `move_to(angle_mdeg)` | Converts to steps (nearest) and writes `REG_CTRL_POS` once. `OUT_OF_RANGE` outside the limits' domain (nothing sent). |
 | `get_capabilities()` | Fixed STS description; no bus access; independent of `identify()`. |
 | `identify(Identity*)` | One read of the six bytes `0x00..0x05`; the device ID is the value stored in the servo. |
-| `prepare()` | Writes `REG_RESPONSE_MODE = RSP_ALL`, then `REG_OPERATION_MODE = OP_SERVO`. Two plain writes, no reads. From `RSP_READ_PING` the first write gets no reply: it takes effect but `TIMEOUT` is returned and the second write is not sent; call again. |
-| `set_protection(const Protection&)` | Writes overcurrent threshold (6.5 mA units), overcurrent time (10 ms units), over-temperature threshold and the unload alarm mask, in that order; stops at the first failure. All values are validated first: a value that does not fit its register, or an alarm without a native bit (`STALLED`, `COMMUNICATION`, `UNLOADED`, `OTHER`), returns `OUT_OF_RANGE` and sends nothing. Values are never clamped. `OVER_VOLTAGE` and `UNDER_VOLTAGE` share one native bit, so requesting either releases torque on both. Overload and voltage thresholds are not written. |
-| `set_profile(const Profile&)` | Writes torque limit, start torque, acceleration, speed, in that order, one plain write each; values are clamped to `get_capabilities().limits` and converted. Start torque is an EEPROM-region register and follows the lock. Stops at the first failure. |
-| `hold()` | Reads `REG_POSITION`, then writes it as the target (two transactions). Torque must already be enabled. A position outside the domain returns `OUT_OF_RANGE` and writes nothing. A servo reporting an alarm still yields its position. Never reports `OK` for a write that was not acknowledged. |
-| `get_hold_failed_step()` | Which sub-operation failed in the latest `hold()`: `HoldStep::NONE`, `READ_POSITION`, `POSITION_OUT_OF_DOMAIN` or `WRITE_TARGET`. |
-| `set_torque(bool)` | `set_servo_enabled`. |
+| `set_mode(MotionMode)` | `ABSOLUTE_POSITION` writes `REG_OPERATION_MODE = OP_SERVO`: one plain write, no reads. That `OP_SERVO` is the right mode for the generic operations is not verified on hardware. Other values return `OUT_OF_RANGE`, nothing sent. |
+| `set_protect_current(ma, time_ms)` | Writes overcurrent threshold (`ma` to 6.5 mA units, at most 511 = 3322 mA) then overcurrent time (`time_ms` to 10 ms units, at most 254 = 2540 ms). |
+| `set_protect_overload(permille, time_ms)` | Writes overload threshold (`permille` to percent of maximum torque, rounded, at most 1000 permille; below 5 permille writes 0, whose meaning is unverified) then overload time (10 ms units, at most 254). The register units come from the register map; how the threshold relates to the load feedback is unverified on hardware. |
+| `set_protect_temperature(c)` | Writes `REG_OVERTEMP_THRESH`, 0..100 C. |
+| `set_protect_voltage(min_mv, max_mv)` | Writes `REG_UNDERVOLT_THRESH` (`min_mv`) then `REG_OVERVOLT_THRESH` (`max_mv`), each converted to 0.1 V units rounded to nearest, at most 254 (25.4 V). `min_mv` above `max_mv` is `OUT_OF_RANGE`. Unit semantics unverified on hardware. |
+| `set_protect_release_alarms(AlarmSet)` | Writes `REG_UNLOAD_ALARM_MASK`. An alarm without a native bit (`STALLED`, `COMMUNICATION`, `UNLOADED`, `OTHER`) returns `OUT_OF_RANGE` and writes nothing. `OVER_VOLTAGE` and `UNDER_VOLTAGE` share one native bit, so requesting either releases torque on both. |
+| `set_speed(mdeg_s)` | Converts to steps/s (nearest) and writes `REG_CTRL_SPEED`; more than 3400 steps/s is `OUT_OF_RANGE`. |
+| `set_acceleration(mdeg_s2)` | Converts to units of 100 steps/s^2 (nearest) and writes `REG_CTRL_ACCEL`; more than 254 is `OUT_OF_RANGE`. |
+| `set_torque_limit(permille)`, `set_start_torque(permille)` | 0..1000 (the register unit 0.1 % equals permille); `REG_CTRL_TORQUE` (SRAM) and `REG_START_TORQUE` (EEPROM region, follows the lock). |
+| `cancel_motion()` | Writes `REG_SERVO_EN = 0`, reads `REG_POSITION`, then writes that position as the target (three transactions). Torque need not be on beforehand. On `OK` the servo is stationary, target equals position and torque is disabled; it is unpowered between the torque-off and the end of the sequence and nothing restores torque. If a later step fails torque stays disabled; if the torque-off fails the torque state is unknown. A position outside the domain returns `OUT_OF_RANGE` and writes no target. A servo reporting an alarm still yields its position. Never reports `OK` for a write that was not acknowledged. |
+| `get_cancel_failed_step()` | Step that failed in the latest `cancel_motion()`: `CancelStep::NONE`, `DISABLE_TORQUE`, `READ_POSITION`, `POSITION_OUT_OF_DOMAIN` or `WRITE_TARGET`. |
+| `set_torque_enabled(bool)`, `read_torque_enabled(bool*)` | `set_servo_enabled`, `get_servo_enabled`. |
 | `read_telemetry(Telemetry*)` | One 15-byte read of `REG_POSITION..REG_CURRENT`. Fails as a whole on a transport error, short reply, or an undecodable field (load outside +-1000 permille, moving flag other than 0/1) with `BAD_RESPONSE`. Position is single-turn. Load, voltage and moving are always valid on STS. |
 | `read_alarms(AlarmSet*)` | Reads `REG_STATUS` and combines it with the reply status byte through `alarms_from_native()`. |
 
@@ -735,10 +764,11 @@ register map or vendor documentation.
    volatile across a power cycle.
 2. `PHASE_READBACK_MASK`: the meaning of `REG_PHASE` bits is not documented; bits
    3 and 6 are excluded from the readback check on community documentation.
-3. `prepare()`: that `OP_SERVO` position mode is the right mode for the generic
+3. `set_mode()`: that `OP_SERVO` position mode is the right mode for the generic
    operations.
-4. `set_protection()` and the typed protection setters: the units and the
-   meaning of the thresholds on a given servo revision.
+4. `set_protect_*()` and the typed protection setters: the units and the
+   meaning of the thresholds on a given servo revision, including the overload
+   percent and the voltage window.
 5. `read_telemetry()`: the load encoding (bit 10 sign, 0..1000), the current
    encoding (bit 15 sign, 6.5 mA) and that position is single-turn. The same
    encodings in `sts_units.h` (position bit 15 sign, load bit 10 sign, current

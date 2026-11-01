@@ -4,7 +4,7 @@
 //
 // Description:
 //    Family-neutral value types for the generic Servo API: results,
-//    capabilities, alarms, identity, telemetry, protection and profile.
+//    capabilities, alarms, identity, telemetry and motion mode.
 //
 //    Units used everywhere in the generic API:
 //      angle          millidegrees (mdeg), int32_t
@@ -164,7 +164,7 @@ enum class Feature : uint64_t {
   START_TORQUE = 1ull << 9,
   // Control
   TORQUE_ENABLE = 1ull << 10,
-  HOLD = 1ull << 11,
+  CANCEL_MOTION = 1ull << 11,  ///< Servo::cancel_motion()
   POSITION_GAINS = 1ull << 12,
   DEADZONE = 1ull << 13,
   ANGLE_LIMITS = 1ull << 14,
@@ -185,8 +185,8 @@ enum class Feature : uint64_t {
   PROTECT_VOLTAGE = 1ull << 27,
   PROTECT_RELEASE_ON_ALARM = 1ull << 28,
   // Bus and admin
-  PING = 1ull << 29,
-  READ_IDENTITY = 1ull << 30,
+  PROBE = 1ull << 29,     ///< Servo::probe()
+  IDENTIFY = 1ull << 30,  ///< Servo::identify()
   SET_ID = 1ull << 31,
   SET_BAUD = 1ull << 32,
   SYNC_WRITE = 1ull << 33,
@@ -300,22 +300,9 @@ struct Telemetry {
   bool moving = false;        ///< Servo reports motion in progress
 };
 
-/** Servo-side protection thresholds. The servo enforces them itself, even
- *  if the host stops. */
-struct Protection {
-  uint16_t stall_current_ma = 0;  ///< Current above which the stall timer runs
-  uint16_t stall_time_ms = 0;     ///< Time above stall current before trip
-  int16_t max_temperature_c = 0;  ///< Temperature trip threshold
-  AlarmSet release_on_alarm;      ///< Alarms that make the servo release torque
-};
-
-/** Motion profile applied to following moves. Values are clamped to the
- *  servo's Limits. */
-struct Profile {
-  uint32_t speed_mdeg_s = 0;           ///< Target speed
-  uint32_t accel_mdeg_s2 = 0;          ///< Acceleration
-  uint16_t torque_permille = 0;        ///< Torque limit, 1000 = full
-  uint16_t start_torque_permille = 0;  ///< Start torque; ignored without START_TORQUE
+/** Motion mode selected with Servo::set_mode(). */
+enum class MotionMode : uint8_t {
+  ABSOLUTE_POSITION  ///< The servo drives to an absolute target angle over its full domain.
 };
 
 }  // namespace servokit

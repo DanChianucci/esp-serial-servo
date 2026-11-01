@@ -35,7 +35,7 @@ uses `core`; `core` uses nothing. `platform` implements `serial`'s
 | Tier | Entry point | Units | Use it when |
 |---|---|---|---|
 | 1. Generic | `Servo&` | mdeg, mdeg/s, mA, mV, permille | The application should not care which servo family is attached. |
-| 2. Family | `STSServo` typed helpers (`set_speed`, `set_target_position`, `unlock_eeprom`, ...) | The family's native register units | You need an STS feature the generic interface does not model. |
+| 2. Family | `STSServo` typed helpers (`set_speed_steps`, `set_target_position`, `unlock_eeprom`, ...) | The family's native register units | You need an STS feature the generic interface does not model. |
 | 3. Registers | `RegisterAccess*` from `Servo::get_registers()` (`read_register`, `write_register`, `read_u8`, `read_u16`, `write_u8`, `write_u16`), or the same calls with an explicit ID on `STSServo` | Register bytes | You need a register no helper covers. |
 
 `STSServo` derives from `Servo`, `RegisterAccess` and `SerialLink`, so the three
@@ -68,7 +68,9 @@ STSServo sts(&controller, 1);
 
 // From here on, use it through the generic interface.
 Servo& servo = sts;
-servo.prepare();
+// Once after power-up, so that writes are acknowledged (STS family call).
+sts.set_response_mode(STS::RSP_ALL);
+servo.set_mode(MotionMode::ABSOLUTE_POSITION);
 servo.move_to(45000);  // 45 degrees
 ```
 
@@ -84,7 +86,7 @@ The runnable programs in `examples/` use the scripted fake in
 
 | Example | Tier |
 |---|---|
-| `examples/example_generic.cpp` | 1: capabilities, prepare, set_profile, move_to, read_telemetry, hold |
+| `examples/example_generic.cpp` | 1: capabilities, set_mode, PersistScope, set_speed, set_acceleration, set_torque_limit, move_to, read_telemetry, cancel_motion |
 | `examples/example_family.cpp` | 2: typed helpers and an explicit unlock/lock persist sequence |
 | `examples/example_raw.cpp` | 3: register reads and writes |
 
@@ -102,7 +104,7 @@ They are built and run with the host tests (`tests/host/CMakeLists.txt`).
   `Capabilities::features`; an operation it lacks returns `UNSUPPORTED`. See
   [capabilities](api.md#capabilities-and-features).
 - **Writes are written as given.** No read-compare-write and no automatic
-  EEPROM lock handling. Reads happen only where documented: `hold()`, the
+  EEPROM lock handling. Reads happen only where documented: `cancel_motion()`, the
   multi-turn setter, and the opt-in readback check. See [write semantics](api.md#write-semantics).
 - **Atomic telemetry.** `read_telemetry()` returns every field or fails as a
   whole.

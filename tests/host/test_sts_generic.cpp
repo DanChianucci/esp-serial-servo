@@ -4,10 +4,12 @@
 #include <chrono>
 #include <cstdio>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "conformance/servo_conformance.h"
 #include "fake_serial_port.h"
+#include "servokit/core/persist_scope.h"
 #include "servokit/families/stseries/sts_servo.h"
 #include "servokit/families/stseries/sts_units.h"
 
@@ -151,17 +153,18 @@ static void test_capabilities() {
   Rig r;
   const Capabilities c = r.servo.get_capabilities();
   for (Feature f : {Feature::ABSOLUTE_POSITION, Feature::SET_SPEED, Feature::SET_ACCEL, Feature::TORQUE_LIMIT,
-                    Feature::START_TORQUE, Feature::TORQUE_ENABLE, Feature::HOLD, Feature::READ_POSITION,
+                    Feature::START_TORQUE, Feature::TORQUE_ENABLE, Feature::CANCEL_MOTION, Feature::READ_POSITION,
                     Feature::READ_CURRENT, Feature::READ_LOAD, Feature::READ_VOLTAGE, Feature::READ_TEMPERATURE,
-                    Feature::READ_MOVING, Feature::READ_ALARMS, Feature::PROTECT_CURRENT, Feature::PROTECT_TEMP,
-                    Feature::PROTECT_RELEASE_ON_ALARM, Feature::PING, Feature::READ_IDENTITY,
+                    Feature::READ_MOVING, Feature::READ_ALARMS, Feature::PROTECT_CURRENT, Feature::PROTECT_OVERLOAD,
+                    Feature::PROTECT_TEMP, Feature::PROTECT_VOLTAGE, Feature::PROTECT_RELEASE_ON_ALARM,
+                    Feature::PROBE, Feature::IDENTIFY,
                     Feature::REGISTER_ACCESS, Feature::PERSIST_CONFIG, Feature::READBACK_CHECK}) {
     CHECK(c.features.has(f));
   }
   // Unverified or not offered through the generic API.
   for (Feature f : {Feature::MULTI_TURN_POS, Feature::RETAINS_POSITION_UNPOWERED, Feature::RELATIVE_POSITION,
                     Feature::CONTINUOUS_ROTATION, Feature::PWM_DRIVE, Feature::CURRENT_LIMIT, Feature::READ_SPEED,
-                    Feature::PROTECT_OVERLOAD, Feature::PROTECT_VOLTAGE, Feature::SET_ID, Feature::SET_BAUD,
+                    Feature::SET_ID, Feature::SET_BAUD,
                     Feature::SYNC_WRITE, Feature::SYNC_READ, Feature::ASYNC_WRITE, Feature::BROADCAST,
                     Feature::POSITION_GAINS, Feature::DEADZONE, Feature::ANGLE_LIMITS, Feature::POSITION_OFFSET}) {
     CHECK(!c.features.has(f));
@@ -224,205 +227,460 @@ static void test_identity() {
   CHECK(r.servo.identify(nullptr) == Result::PARAM && r.sent() == 3);
 }
 
-static void test_prepare() {
-  {
-    Rig r;
-    r.acks(2);
-    CHECK(r.servo.prepare() == Result::OK);
-    CHECK(r.sent() == 2);  // two plain writes, no read first
-    CHECK(r.tx(0) == write_cmd(0x08, {1}));  // RSP_ALL
-    CHECK(r.tx(1) == write_cmd(0x21, {0}));  // OP_SERVO
-  }
-  {
-    Rig r;  // first write unanswered: reported, second write not sent
-    r.port.script_timeout();
-    CHECK(r.servo.prepare() == Result::TIMEOUT && r.sent() == 1);
-  }
+static void test_set_mode() {
   {
     Rig r;
     r.ack();
+    CHECK(r.servo.set_mode(MotionMode::ABSOLUTE_POSITION) == Result::OK);
+    CHECK(r.sent() == 1 && r.tx(0) == write_cmd(0x21, {0}));  // OP_SERVO, one plain write, no reads
+  }
+  {
+    Rig r;
     r.port.script_timeout();
-    CHECK(r.servo.prepare() == Result::TIMEOUT && r.sent() == 2);
+    CHECK(r.servo.set_mode(MotionMode::ABSOLUTE_POSITION) == Result::TIMEOUT && r.sent() == 1);
+  }
+  {
+    Rig r;  // a value outside the enum sends nothing
+    CHECK(r.servo.set_mode(static_cast<MotionMode>(7)) == Result::OUT_OF_RANGE && r.sent() == 0);
   }
 }
 
-static void test_set_protection() {
-  Protection p;
-  p.stall_current_ma = 1000;
-  p.stall_time_ms = 500;
-  p.max_temperature_c = 70;
-  p.release_on_alarm = Alarm::OVER_TEMPERATURE | Alarm::OVER_CURRENT;
+static void test_response_mode_is_family_only() {
+  Rig r;
+  r.ack();
+  CHECK(r.servo.set_response_mode(STS::RSP_ALL) == Result::OK);
+  CHECK(r.sent() == 1 && r.tx(0) == write_cmd(0x08, {1}));
+}
+
+static void test_unit_helpers_protection() {
+  CHECK(u::mv_to_voltage_units(0) == 0 && u::mv_to_voltage_units(49) == 0 && u::mv_to_voltage_units(50) == 1);
+  CHECK(u::mv_to_voltage_units(8400) == 84 && u::mv_to_voltage_units(25400) == 254);
+  CHECK(u::mv_to_voltage_units(25449) == 254 && u::mv_to_voltage_units(25450) == 255);
+  CHECK(u::permille_to_percent(0) == 0 && u::permille_to_percent(4) == 0 && u::permille_to_percent(5) == 1);
+  CHECK(u::permille_to_percent(500) == 50 && u::permille_to_percent(1000) == 100);
+}
+
+static void test_set_protect_current() {
   {
     Rig r;
-    r.acks(4);
-    CHECK(r.servo.set_protection(p) == Result::OK);
-    CHECK(r.sent() == 4);  // four plain writes, no reads
+    r.acks(2);
+    CHECK(r.servo.set_protect_current(1000, 500) == Result::OK);
+    CHECK(r.sent() == 2);  // two plain writes, no reads
     CHECK(r.tx(0) == write_cmd(0x1C, {154, 0}));
     CHECK(r.tx(1) == write_cmd(0x26, {50}));
-    CHECK(r.tx(2) == write_cmd(0x0D, {70}));
-    CHECK(r.tx(3) == write_cmd(0x13, {0x0C}));
-    // The EEPROM lock register is never written.
-    for (const Bytes& f : r.port.tx_log()) CHECK(f[5] != 0x37);
   }
   {
     Rig r;  // boundaries
-    r.acks(4);
-    p.stall_current_ma = 3322;
-    p.stall_time_ms = 2540;
-    p.max_temperature_c = 100;
-    p.release_on_alarm = Alarm::OVER_VOLTAGE | Alarm::ENCODER | Alarm::OVER_TEMPERATURE | Alarm::OVER_CURRENT |
-                         Alarm::ANGLE_LIMIT | Alarm::OVERLOAD;
-    CHECK(r.servo.set_protection(p) == Result::OK);
+    r.acks(2);
+    CHECK(r.servo.set_protect_current(3322, 2540) == Result::OK);
     CHECK(r.tx(0) == write_cmd(0x1C, {0xFF, 0x01}) && r.tx(1) == write_cmd(0x26, {254}));
-    CHECK(r.tx(2) == write_cmd(0x0D, {100}) && r.tx(3) == write_cmd(0x13, {0x3F}));
   }
   {
-    Rig r;  // zero is written as given; either voltage alarm selects the voltage bit
-    r.acks(4);
-    p = Protection{};
-    p.release_on_alarm = Alarm::UNDER_VOLTAGE;
-    CHECK(r.servo.set_protection(p) == Result::OK);
+    Rig r;  // zero is written as given
+    r.acks(2);
+    CHECK(r.servo.set_protect_current(0, 0) == Result::OK);
     CHECK(r.tx(0) == write_cmd(0x1C, {0, 0}) && r.tx(1) == write_cmd(0x26, {0}));
-    CHECK(r.tx(2) == write_cmd(0x0D, {0}) && r.tx(3) == write_cmd(0x13, {0x01}));
   }
   {
     Rig r;  // out-of-range values send nothing
-    Protection bad;
-    bad.stall_current_ma = 3329;
-    CHECK(r.servo.set_protection(bad) == Result::OUT_OF_RANGE);
-    bad = Protection{};
-    bad.stall_time_ms = 2600;
-    CHECK(r.servo.set_protection(bad) == Result::OUT_OF_RANGE);
-    bad = Protection{};
-    bad.max_temperature_c = 101;
-    CHECK(r.servo.set_protection(bad) == Result::OUT_OF_RANGE);
-    bad.max_temperature_c = -1;
-    CHECK(r.servo.set_protection(bad) == Result::OUT_OF_RANGE);
-    for (Alarm a : {Alarm::STALLED, Alarm::COMMUNICATION, Alarm::UNLOADED, Alarm::OTHER}) {
-      bad = Protection{};
-      bad.release_on_alarm = Alarm::OVERLOAD | a;
-      CHECK(r.servo.set_protection(bad) == Result::OUT_OF_RANGE);
-    }
+    CHECK(r.servo.set_protect_current(3329, 0) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_protect_current(0, 2600) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_protect_current(UINT32_MAX, 0) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_protect_current(0, UINT32_MAX) == Result::OUT_OF_RANGE);
     CHECK(r.sent() == 0);
   }
   {
     Rig r;  // stops at the first failed write
-    p = Protection{};
-    r.ack();
+    r.port.script_timeout();
+    CHECK(r.servo.set_protect_current(1000, 500) == Result::TIMEOUT && r.sent() == 1);
+  }
+  {
+    Rig r;  // second write fails: the first one was sent
     r.ack();
     r.port.script_timeout();
-    CHECK(r.servo.set_protection(p) == Result::TIMEOUT && r.sent() == 3);
+    CHECK(r.servo.set_protect_current(1000, 500) == Result::TIMEOUT && r.sent() == 2);
   }
 }
 
-static void test_set_profile() {
+static void test_set_protect_overload() {
+  {
+    Rig r;
+    r.acks(2);
+    CHECK(r.servo.set_protect_overload(500, 500) == Result::OK);
+    CHECK(r.sent() == 2);
+    CHECK(r.tx(0) == write_cmd(0x24, {50}));
+    CHECK(r.tx(1) == write_cmd(0x23, {50}));
+  }
+  {
+    Rig r;  // boundaries and rounding to the nearest percent
+    r.acks(4);
+    CHECK(r.servo.set_protect_overload(1000, 2540) == Result::OK);
+    CHECK(r.tx(0) == write_cmd(0x24, {100}) && r.tx(1) == write_cmd(0x23, {254}));
+    CHECK(r.servo.set_protect_overload(14, 0) == Result::OK);
+    CHECK(r.tx(2) == write_cmd(0x24, {1}) && r.tx(3) == write_cmd(0x23, {0}));
+  }
+  {
+    Rig r;
+    CHECK(r.servo.set_protect_overload(1001, 0) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_protect_overload(65535, 0) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_protect_overload(500, 2600) == Result::OUT_OF_RANGE);
+    CHECK(r.sent() == 0);
+  }
+  {
+    Rig r;
+    r.ack();
+    r.port.script_timeout();
+    CHECK(r.servo.set_protect_overload(500, 500) == Result::TIMEOUT && r.sent() == 2);
+  }
+}
+
+static void test_set_protect_temperature() {
+  {
+    Rig r;
+    r.acks(3);
+    CHECK(r.servo.set_protect_temperature(70) == Result::OK && r.tx(0) == write_cmd(0x0D, {70}));
+    CHECK(r.servo.set_protect_temperature(0) == Result::OK && r.tx(1) == write_cmd(0x0D, {0}));
+    CHECK(r.servo.set_protect_temperature(100) == Result::OK && r.tx(2) == write_cmd(0x0D, {100}));
+    CHECK(r.sent() == 3);
+  }
+  {
+    Rig r;
+    CHECK(r.servo.set_protect_temperature(101) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_protect_temperature(-1) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_protect_temperature(INT16_MIN) == Result::OUT_OF_RANGE);
+    CHECK(r.sent() == 0);
+  }
+}
+
+static void test_set_protect_voltage() {
+  {
+    Rig r;
+    r.acks(2);
+    CHECK(r.servo.set_protect_voltage(6000, 8400) == Result::OK);
+    CHECK(r.sent() == 2);
+    CHECK(r.tx(0) == write_cmd(0x0F, {60}));  // under-voltage threshold (minimum)
+    CHECK(r.tx(1) == write_cmd(0x0E, {84}));  // over-voltage threshold (maximum)
+  }
+  {
+    Rig r;  // boundaries; equal bounds are accepted
+    r.acks(4);
+    CHECK(r.servo.set_protect_voltage(0, 25449) == Result::OK);
+    CHECK(r.tx(0) == write_cmd(0x0F, {0}) && r.tx(1) == write_cmd(0x0E, {254}));
+    CHECK(r.servo.set_protect_voltage(5000, 5000) == Result::OK);
+    CHECK(r.tx(2) == write_cmd(0x0F, {50}) && r.tx(3) == write_cmd(0x0E, {50}));
+  }
+  {
+    Rig r;
+    CHECK(r.servo.set_protect_voltage(0, 25450) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_protect_voltage(0, UINT32_MAX) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_protect_voltage(8401, 8400) == Result::OUT_OF_RANGE);
+    CHECK(r.sent() == 0);
+  }
+  {
+    Rig r;
+    r.ack();
+    r.port.script_timeout();
+    CHECK(r.servo.set_protect_voltage(6000, 8400) == Result::TIMEOUT && r.sent() == 2);
+  }
+}
+
+static void test_set_protect_release_alarms() {
+  {
+    Rig r;
+    r.acks(3);
+    CHECK(r.servo.set_protect_release_alarms(Alarm::OVER_TEMPERATURE | Alarm::OVER_CURRENT) == Result::OK);
+    CHECK(r.sent() == 1 && r.tx(0) == write_cmd(0x13, {0x0C}));
+    // Either voltage alarm selects the shared voltage bit.
+    CHECK(r.servo.set_protect_release_alarms(Alarm::UNDER_VOLTAGE) == Result::OK && r.tx(1) == write_cmd(0x13, {0x01}));
+    CHECK(r.servo.set_protect_release_alarms(AlarmSet()) == Result::OK && r.tx(2) == write_cmd(0x13, {0x00}));
+  }
+  {
+    Rig r;
+    r.ack();
+    const AlarmSet all = Alarm::OVER_VOLTAGE | Alarm::ENCODER | Alarm::OVER_TEMPERATURE | Alarm::OVER_CURRENT |
+                         Alarm::ANGLE_LIMIT | Alarm::OVERLOAD;
+    CHECK(r.servo.set_protect_release_alarms(all) == Result::OK && r.tx(0) == write_cmd(0x13, {0x3F}));
+  }
+  {
+    Rig r;  // alarms with no native bit send nothing
+    for (Alarm a : {Alarm::STALLED, Alarm::COMMUNICATION, Alarm::UNLOADED, Alarm::OTHER}) {
+      CHECK(r.servo.set_protect_release_alarms(Alarm::OVERLOAD | a) == Result::OUT_OF_RANGE);
+    }
+    CHECK(r.sent() == 0);
+  }
+  {
+    Rig r;
+    r.port.script_timeout();
+    CHECK(r.servo.set_protect_release_alarms(Alarm::OVERLOAD) == Result::TIMEOUT && r.sent() == 1);
+  }
+}
+
+static void test_motion_parameters() {
   {
     Rig r;
     r.acks(4);
-    Profile p;
-    p.speed_mdeg_s = 87891;
-    p.accel_mdeg_s2 = 87891;
-    p.torque_permille = 500;
-    p.start_torque_permille = 100;
-    CHECK(r.servo.set_profile(p) == Result::OK);
-    CHECK(r.sent() == 4);  // four plain writes, no reads
-    CHECK(r.tx(0) == write_cmd(0x30, {0xF4, 0x01}));
-    CHECK(r.tx(1) == write_cmd(0x18, {0x64, 0x00}));
-    CHECK(r.tx(2) == write_cmd(0x29, {10}));
-    CHECK(r.tx(3) == write_cmd(0x2E, {0xE8, 0x03}));
+    CHECK(r.servo.set_speed(87891) == Result::OK && r.tx(0) == write_cmd(0x2E, {0xE8, 0x03}));
+    CHECK(r.servo.set_acceleration(87891) == Result::OK && r.tx(1) == write_cmd(0x29, {10}));
+    CHECK(r.servo.set_torque_limit(500) == Result::OK && r.tx(2) == write_cmd(0x30, {0xF4, 0x01}));
+    CHECK(r.servo.set_start_torque(100) == Result::OK && r.tx(3) == write_cmd(0x18, {0x64, 0x00}));
+    CHECK(r.sent() == 4);  // one plain write each, no reads
   }
   {
-    Rig r;  // clamped to the family limits
-    r.acks(4);
-    Profile p;
-    p.speed_mdeg_s = UINT32_MAX;
-    p.accel_mdeg_s2 = UINT32_MAX;
-    p.torque_permille = 65535;
-    p.start_torque_permille = 1001;
-    CHECK(r.servo.set_profile(p) == Result::OK);
-    CHECK(r.tx(0) == write_cmd(0x30, {0xE8, 0x03}) && r.tx(1) == write_cmd(0x18, {0xE8, 0x03}));
-    CHECK(r.tx(2) == write_cmd(0x29, {254}) && r.tx(3) == write_cmd(0x2E, {0x48, 0x0D}));
+    Rig r;  // domain ends and zero
+    r.acks(6);
+    const Limits l = r.servo.get_capabilities().limits;
+    CHECK(r.servo.set_speed(l.max_speed_mdeg_s) == Result::OK && r.tx(0) == write_cmd(0x2E, {0x48, 0x0D}));
+    CHECK(r.servo.set_acceleration(l.max_accel_mdeg_s2) == Result::OK && r.tx(1) == write_cmd(0x29, {254}));
+    CHECK(r.servo.set_torque_limit(1000) == Result::OK && r.tx(2) == write_cmd(0x30, {0xE8, 0x03}));
+    CHECK(r.servo.set_start_torque(1000) == Result::OK && r.tx(3) == write_cmd(0x18, {0xE8, 0x03}));
+    CHECK(r.servo.set_speed(0) == Result::OK && r.tx(4) == write_cmd(0x2E, {0, 0}));
+    CHECK(r.servo.set_acceleration(0) == Result::OK && r.tx(5) == write_cmd(0x29, {0}));
   }
   {
-    Rig r;  // zero stays zero
-    r.acks(4);
-    CHECK(r.servo.set_profile(Profile{}) == Result::OK);
-    CHECK(r.tx(0) == write_cmd(0x30, {0, 0}) && r.tx(1) == write_cmd(0x18, {0, 0}));
-    CHECK(r.tx(2) == write_cmd(0x29, {0}) && r.tx(3) == write_cmd(0x2E, {0, 0}));
+    Rig r;  // out of range: nothing is clamped or sent
+    const Limits l = r.servo.get_capabilities().limits;
+    CHECK(r.servo.set_speed(l.max_speed_mdeg_s + 88) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_speed(UINT32_MAX) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_acceleration(l.max_accel_mdeg_s2 + 4395) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_acceleration(UINT32_MAX) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_torque_limit(1001) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_torque_limit(65535) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_start_torque(1001) == Result::OUT_OF_RANGE);
+    CHECK(r.sent() == 0);
   }
   {
-    Rig r;  // stops at the first failed write
-    r.ack();
+    Rig r;
     r.port.script_timeout();
-    CHECK(r.servo.set_profile(Profile{}) == Result::TIMEOUT && r.sent() == 2);
+    CHECK(r.servo.set_speed(1000) == Result::TIMEOUT && r.sent() == 1);
   }
+}
+
+// A Servo with one feature at a time: every other setter must stay UNSUPPORTED
+// and send nothing, independent of the supported one.
+static void test_unsupported_independence() {
+  class Bare : public Servo {
+   public:
+    Result move_to(int32_t) override { return Result::OK; }
+    Capabilities get_capabilities() const override { return Capabilities{}; }
+  } bare;
+  CHECK(bare.set_mode(MotionMode::ABSOLUTE_POSITION) == Result::UNSUPPORTED);
+  CHECK(bare.set_protect_current(1, 1) == Result::UNSUPPORTED);
+  CHECK(bare.set_protect_overload(1, 1) == Result::UNSUPPORTED);
+  CHECK(bare.set_protect_temperature(1) == Result::UNSUPPORTED);
+  CHECK(bare.set_protect_voltage(1, 2) == Result::UNSUPPORTED);
+  CHECK(bare.set_protect_release_alarms(Alarm::OVERLOAD) == Result::UNSUPPORTED);
+  CHECK(bare.set_speed(1) == Result::UNSUPPORTED && bare.set_acceleration(1) == Result::UNSUPPORTED);
+  CHECK(bare.set_torque_limit(1) == Result::UNSUPPORTED && bare.set_start_torque(1) == Result::UNSUPPORTED);
+  CHECK(bare.cancel_motion() == Result::UNSUPPORTED && bare.set_torque_enabled(true) == Result::UNSUPPORTED);
+  bool b = true;
+  CHECK(bare.read_torque_enabled(&b) == Result::UNSUPPORTED && b);
+
+  // A servo implementing only set_protect_temperature leaves the others UNSUPPORTED.
+  class TempOnly : public Bare {
+   public:
+    Result set_protect_temperature(int16_t) override { return Result::OK; }
+  } temp_only;
+  CHECK(temp_only.set_protect_temperature(50) == Result::OK);
+  CHECK(temp_only.set_protect_current(1, 1) == Result::UNSUPPORTED);
+  CHECK(temp_only.set_protect_overload(1, 1) == Result::UNSUPPORTED);
+  CHECK(temp_only.set_protect_voltage(1, 2) == Result::UNSUPPORTED);
+  CHECK(temp_only.set_protect_release_alarms(Alarm::OVERLOAD) == Result::UNSUPPORTED);
+  CHECK(temp_only.set_speed(1) == Result::UNSUPPORTED);
 }
 
 static void test_torque_and_persist() {
   Rig r;
   r.acks(4);
-  CHECK(r.servo.set_torque(true) == Result::OK && r.tx(0) == write_cmd(0x28, {1}));
-  CHECK(r.servo.set_torque(false) == Result::OK && r.tx(1) == write_cmd(0x28, {0}));
+  CHECK(r.servo.set_torque_enabled(true) == Result::OK && r.tx(0) == write_cmd(0x28, {1}));
+  CHECK(r.servo.set_torque_enabled(false) == Result::OK && r.tx(1) == write_cmd(0x28, {0}));
   CHECK(r.servo.set_persist(true) == Result::OK && r.tx(2) == write_cmd(0x37, {0}));
   CHECK(r.servo.set_persist(false) == Result::OK && r.tx(3) == write_cmd(0x37, {1}));
   CHECK(r.sent() == 4);
 }
 
-static void test_hold() {
+static void test_read_torque_enabled() {
+  Rig r;
+  bool enabled = false;
+  r.value({1});
+  CHECK(r.servo.read_torque_enabled(&enabled) == Result::OK && enabled && r.tx(0) == read_cmd(0x28, 1));
+  r.value({0});
+  CHECK(r.servo.read_torque_enabled(&enabled) == Result::OK && !enabled);
+  enabled = true;
+  r.value({7});
+  CHECK(r.servo.read_torque_enabled(&enabled) == Result::BAD_RESPONSE && enabled);
+  r.port.script_timeout();
+  CHECK(r.servo.read_torque_enabled(&enabled) == Result::TIMEOUT && enabled);
+  const size_t before = r.sent();
+  CHECK(r.servo.read_torque_enabled(nullptr) == Result::PARAM && r.sent() == before);
+}
+
+// Servo that records set_persist() calls.
+class RecordingServo : public Servo {
+ public:
+  Result move_to(int32_t) override { return Result::OK; }
+  Capabilities get_capabilities() const override { return Capabilities{}; }
+  Result set_persist(bool p) override {
+    calls.push_back(p);
+    return p ? unlock_result : relock_result;
+  }
+  std::vector<bool> calls;
+  Result unlock_result = Result::OK;
+  Result relock_result = Result::OK;
+};
+
+static Result early_return(Servo& s, bool bail) {
+  PersistScope scope(s);
+  if (bail) return Result::PARAM;
+  return Result::OK;
+}
+
+static void test_persist_scope() {
   {
-    Rig r;
+    RecordingServo s;  // normal exit relocks
+    { PersistScope scope(s); CHECK(scope.ok() && scope.result() == Result::OK); }
+    CHECK(s.calls == std::vector<bool>({true, false}));
+  }
+  {
+    RecordingServo s;  // early return relocks
+    CHECK(early_return(s, true) == Result::PARAM);
+    CHECK(s.calls == std::vector<bool>({true, false}));
+  }
+  {
+    RecordingServo s;  // failed unlock: reported, and no relock
+    s.unlock_result = Result::TIMEOUT;
+    {
+      PersistScope scope(s);
+      CHECK(!scope.ok() && scope.result() == Result::TIMEOUT);
+      CHECK(scope.close() == Result::OK);  // nothing to relock
+    }
+    CHECK(s.calls == std::vector<bool>({true}));
+  }
+  {
+    RecordingServo s;  // close() relocks early, reports the result, destructor does nothing
+    s.relock_result = Result::BUS;
+    {
+      PersistScope scope(s);
+      CHECK(scope.close() == Result::BUS);
+      CHECK(scope.close() == Result::OK);  // second close sends nothing
+    }
+    CHECK(s.calls == std::vector<bool>({true, false}));
+  }
+  {
+    RecordingServo s;  // a relock failure in the destructor is not observable and does not throw
+    s.relock_result = Result::TIMEOUT;
+    { PersistScope scope(s); }
+    CHECK(s.calls == std::vector<bool>({true, false}));
+  }
+  static_assert(!std::is_copy_constructible<PersistScope>::value && !std::is_move_constructible<PersistScope>::value &&
+                    !std::is_copy_assignable<PersistScope>::value && !std::is_move_assignable<PersistScope>::value,
+                "PersistScope must be neither copyable nor movable");
+  {
+    Rig r;  // on the STS family: unlock write, configuration write, lock write
+    r.acks(3);
+    {
+      PersistScope scope(r.servo);
+      CHECK(scope.ok());
+      CHECK(r.servo.set_protect_temperature(70) == Result::OK);
+    }
+    CHECK(r.sent() == 3);
+    CHECK(r.tx(0) == write_cmd(0x37, {0}) && r.tx(1) == write_cmd(0x0D, {70}) && r.tx(2) == write_cmd(0x37, {1}));
+  }
+  {
+    Rig r;  // unlock unanswered on the STS family: no lock frame follows
+    r.port.script_timeout();
+    { PersistScope scope(r.servo); CHECK(scope.result() == Result::TIMEOUT); }
+    CHECK(r.sent() == 1);
+  }
+}
+
+static bool torque_never_enabled(const Rig& r) {
+  for (const Bytes& f : r.port.tx_log()) {
+    if (f == write_cmd(0x28, {1})) return false;
+  }
+  return true;
+}
+
+static void test_cancel_motion() {
+  using Step = STSServo::CancelStep;
+  {
+    Rig r;  // torque off, read position, write it as the target
+    r.ack();
     r.value({0x00, 0x08});
     r.ack();
-    CHECK(r.servo.hold() == Result::OK);
-    CHECK(r.sent() == 2 && r.tx(0) == read_cmd(0x38, 2) && r.tx(1) == write_cmd(0x2A, {0x00, 0x08}));
-    CHECK(r.servo.get_hold_failed_step() == STSServo::HoldStep::NONE);
+    CHECK(r.servo.cancel_motion() == Result::OK);
+    CHECK(r.sent() == 3);
+    CHECK(r.tx(0) == write_cmd(0x28, {0}) && r.tx(1) == read_cmd(0x38, 2) && r.tx(2) == write_cmd(0x2A, {0x00, 0x08}));
+    CHECK(r.servo.get_cancel_failed_step() == Step::NONE);
+    CHECK(torque_never_enabled(r));
   }
   {
     Rig r;  // negative feedback is re-encoded as sign-magnitude
+    r.ack();
     r.value({0x64, 0x80});
     r.ack();
-    CHECK(r.servo.hold() == Result::OK && r.tx(1) == write_cmd(0x2A, {0x64, 0x80}));
+    CHECK(r.servo.cancel_motion() == Result::OK && r.tx(2) == write_cmd(0x2A, {0x64, 0x80}));
   }
   {
-    Rig r;  // an alarm in the status byte does not stop the hold
+    Rig r;  // an alarm in the status byte does not stop the sequence
+    r.ack();
     r.value({0x10, 0x00}, STS::STAT_OVERLOAD);
     r.ack();
-    CHECK(r.servo.hold() == Result::OK && r.tx(1) == write_cmd(0x2A, {0x10, 0x00}));
+    CHECK(r.servo.cancel_motion() == Result::OK && r.tx(2) == write_cmd(0x2A, {0x10, 0x00}));
   }
   {
-    Rig r;  // read times out: nothing is commanded
+    Rig r;  // torque-off unanswered: nothing else is sent
     r.port.script_timeout();
-    CHECK(r.servo.hold() == Result::TIMEOUT);
-    CHECK(r.sent() == 1 && r.servo.get_hold_failed_step() == STSServo::HoldStep::READ_POSITION);
+    CHECK(r.servo.cancel_motion() == Result::TIMEOUT);
+    CHECK(r.sent() == 1 && r.servo.get_cancel_failed_step() == Step::DISABLE_TORQUE);
+  }
+  {
+    Rig r;  // torque-off answered with an error status
+    r.value({}, STS::STAT_VOLTAGE);
+    CHECK(r.servo.cancel_motion() == Result::BAD_RESPONSE);
+    CHECK(r.sent() == 1 && r.servo.get_cancel_failed_step() == Step::DISABLE_TORQUE);
+  }
+  {
+    Rig r;  // position read times out: torque stays disabled, no target is written
+    r.ack();
+    r.port.script_timeout();
+    CHECK(r.servo.cancel_motion() == Result::TIMEOUT);
+    CHECK(r.sent() == 2 && r.servo.get_cancel_failed_step() == Step::READ_POSITION);
+    CHECK(r.tx(0) == write_cmd(0x28, {0}) && torque_never_enabled(r));
   }
   {
     Rig r;  // short position reply
+    r.ack();
     r.value({0x00});
-    CHECK(r.servo.hold() == Result::BAD_RESPONSE);
-    CHECK(r.sent() == 1 && r.servo.get_hold_failed_step() == STSServo::HoldStep::READ_POSITION);
+    CHECK(r.servo.cancel_motion() == Result::BAD_RESPONSE);
+    CHECK(r.sent() == 2 && r.servo.get_cancel_failed_step() == Step::READ_POSITION && torque_never_enabled(r));
   }
   {
-    Rig r;  // write unanswered: not reported as success
+    Rig r;  // target write unanswered: not reported as success, torque stays disabled
+    r.ack();
     r.value({0x00, 0x08});
     r.port.script_timeout();
-    CHECK(r.servo.hold() == Result::TIMEOUT);
-    CHECK(r.sent() == 2 && r.servo.get_hold_failed_step() == STSServo::HoldStep::WRITE_TARGET);
+    CHECK(r.servo.cancel_motion() == Result::TIMEOUT);
+    CHECK(r.sent() == 3 && r.servo.get_cancel_failed_step() == Step::WRITE_TARGET && torque_never_enabled(r));
   }
   {
-    Rig r;  // write answered with an error status
+    Rig r;  // target write answered with an error status
+    r.ack();
     r.value({0x00, 0x08});
     r.value({}, STS::STAT_VOLTAGE);
-    CHECK(r.servo.hold() == Result::BAD_RESPONSE);
-    CHECK(r.servo.get_hold_failed_step() == STSServo::HoldStep::WRITE_TARGET);
+    CHECK(r.servo.cancel_motion() == Result::BAD_RESPONSE);
+    CHECK(r.servo.get_cancel_failed_step() == Step::WRITE_TARGET && torque_never_enabled(r));
   }
   {
-    Rig r;  // magnitude beyond the target range: nothing written
+    Rig r;  // magnitude beyond the target range: no target written, torque stays disabled
+    r.ack();
     r.value({0xFF, 0x7F});
-    CHECK(r.servo.hold() == Result::OUT_OF_RANGE);
-    CHECK(r.sent() == 1 && r.servo.get_hold_failed_step() == STSServo::HoldStep::POSITION_OUT_OF_DOMAIN);
+    CHECK(r.servo.cancel_motion() == Result::OUT_OF_RANGE);
+    CHECK(r.sent() == 2 && r.servo.get_cancel_failed_step() == Step::POSITION_OUT_OF_DOMAIN);
+    CHECK(torque_never_enabled(r));
+    r.ack();
     r.value({0x00, 0x08});
     r.ack();
-    CHECK(r.servo.hold() == Result::OK && r.servo.get_hold_failed_step() == STSServo::HoldStep::NONE);
+    CHECK(r.servo.cancel_motion() == Result::OK && r.servo.get_cancel_failed_step() == Step::NONE);
   }
 }
 
@@ -608,16 +866,24 @@ static void test_telemetry_failures() {
 static void script_sts(Rig& r, ConformanceOp op, int fail_at) {
   std::vector<Bytes> replies;
   switch (op) {
-    case ConformanceOp::PING:
+    case ConformanceOp::PROBE:
     case ConformanceOp::MOVE_TO:
-    case ConformanceOp::SET_TORQUE:
+    case ConformanceOp::SET_MODE:
+    case ConformanceOp::SET_PROTECT_TEMPERATURE:
+    case ConformanceOp::SET_PROTECT_RELEASE_ALARMS:
+    case ConformanceOp::SET_SPEED:
+    case ConformanceOp::SET_ACCELERATION:
+    case ConformanceOp::SET_TORQUE_LIMIT:
+    case ConformanceOp::SET_START_TORQUE:
+    case ConformanceOp::SET_TORQUE_ENABLED:
     case ConformanceOp::SET_PERSIST:
     case ConformanceOp::REGISTER_WRITE: replies = {reply()}; break;
-    case ConformanceOp::READ_IDENTITY: replies = {reply({3, 7, 0, 9, 3, 1})}; break;
-    case ConformanceOp::PREPARE: replies = {reply(), reply()}; break;
-    case ConformanceOp::SET_PROTECTION:
-    case ConformanceOp::SET_PROFILE: replies = {reply(), reply(), reply(), reply()}; break;
-    case ConformanceOp::HOLD: replies = {reply({0x00, 0x08}), reply()}; break;
+    case ConformanceOp::IDENTIFY: replies = {reply({3, 7, 0, 9, 3, 1})}; break;
+    case ConformanceOp::SET_PROTECT_CURRENT:
+    case ConformanceOp::SET_PROTECT_OVERLOAD:
+    case ConformanceOp::SET_PROTECT_VOLTAGE: replies = {reply(), reply()}; break;
+    case ConformanceOp::CANCEL_MOTION: replies = {reply(), reply({0x00, 0x08}), reply()}; break;
+    case ConformanceOp::READ_TORQUE_ENABLED: replies = {reply({1})}; break;
     case ConformanceOp::READ_TELEMETRY: replies = {reply(Feedback{}.bytes())}; break;
     case ConformanceOp::READ_ALARMS: replies = {reply({0})}; break;
     case ConformanceOp::REGISTER_READ: replies = {reply({1, 2})}; break;
@@ -662,25 +928,25 @@ static void test_conformance() {
   {  // The suite detects a servo whose declared features do not match its operations.
     class Liar : public Servo {
      public:
-      explicit Liar(bool claims_hold) : m_claims_hold(claims_hold) {}
+      explicit Liar(bool claims_cancel) : m_claims_cancel(claims_cancel) {}
       Result move_to(int32_t a) override { return (a < -100 || a > 100) ? Result::OUT_OF_RANGE : Result::OK; }
       Capabilities get_capabilities() const override {
         Capabilities c;
-        c.features = m_claims_hold ? (Feature::ABSOLUTE_POSITION | Feature::HOLD) : FeatureSet(Feature::ABSOLUTE_POSITION);
+        c.features = m_claims_cancel ? (Feature::ABSOLUTE_POSITION | Feature::CANCEL_MOTION) : FeatureSet(Feature::ABSOLUTE_POSITION);
         c.limits.angle_max_mdeg = 100;
         c.limits.angle_min_mdeg = -100;
         c.limits.resolution_mdeg = 1;
         return c;
       }
      private:
-      bool m_claims_hold;
+      bool m_claims_cancel;
     };
     ConformanceHooks h;
     h.reset = [] {};
     h.script = [](ConformanceOp, int) {};
     h.frames_sent = [] { return size_t{0}; };
-    Liar honest(false);  // same servo without the HOLD claim: conforms
-    Liar liar(true);     // only the HOLD claim is false
+    Liar honest(false);  // same servo without the CANCEL_MOTION claim: conforms
+    Liar liar(true);     // only the CANCEL_MOTION claim is false
     CHECK(run_servo_conformance(honest, h, true) == 0);
     CHECK(run_servo_conformance(liar, h, true) != 0);
     class RegisterLiar : public Liar {
@@ -693,6 +959,24 @@ static void test_conformance() {
       }
     } register_liar;
     CHECK(run_servo_conformance(register_liar, h, true) != 0);
+    // A servo that implements a setter without advertising its feature, or the reverse, fails.
+    class SetterLiar : public Liar {
+     public:
+      SetterLiar() : Liar(false) {}
+      Result set_protect_voltage(uint32_t, uint32_t) override { return Result::OK; }  // feature absent
+    } setter_liar;
+    CHECK(run_servo_conformance(setter_liar, h, true) != 0);
+    class ClaimLiar : public Liar {
+     public:
+      ClaimLiar() : Liar(false) {}
+      Capabilities get_capabilities() const override {
+        Capabilities c = Liar::get_capabilities();
+        c.features.set(Feature::SET_SPEED);  // claimed, but set_speed() stays UNSUPPORTED
+        c.limits.max_speed_mdeg_s = 1;
+        return c;
+      }
+    } claim_liar;
+    CHECK(run_servo_conformance(claim_liar, h, true) != 0);
   }
 }
 
@@ -702,11 +986,20 @@ int main() {
   test_capabilities();
   test_move_to();
   test_identity();
-  test_prepare();
-  test_set_protection();
-  test_set_profile();
+  test_set_mode();
+  test_response_mode_is_family_only();
+  test_unit_helpers_protection();
+  test_set_protect_current();
+  test_set_protect_overload();
+  test_set_protect_temperature();
+  test_set_protect_voltage();
+  test_set_protect_release_alarms();
+  test_motion_parameters();
+  test_unsupported_independence();
   test_torque_and_persist();
-  test_hold();
+  test_read_torque_enabled();
+  test_persist_scope();
+  test_cancel_motion();
   test_telemetry_fields();
   test_telemetry_alarms();
   test_telemetry_failures();
