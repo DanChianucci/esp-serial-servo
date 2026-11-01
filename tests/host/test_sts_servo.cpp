@@ -240,6 +240,214 @@ static void test_no_controller_and_ownership() {
   CHECK(owned.capabilities().features.has(Feature::ABSOLUTE_POSITION));
 }
 
+static void test_verify_off_and_default() {
+  Rig r;
+  CHECK(!r.servo.verify_writes());
+  r.port.script_reply(frame(1, 0, {}));
+  CHECK(r.servo.write_u8(1, STS::REG_DEVICE_ID, 2) == Result::OK);
+  CHECK(r.port.tx_log().size() == 1);
+  CHECK(r.servo.set_verify_writes(true) == Result::OK && r.servo.verify_writes());
+  CHECK(r.port.tx_log().size() == 1);  // the setting touches no bus
+  CHECK(r.servo.set_verify_writes(false) == Result::OK && !r.servo.verify_writes());
+}
+
+static void test_verify_match_and_mismatch() {
+  Rig r;
+  r.servo.set_verify_writes(true);
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.script_reply(frame(1, 0, {0x2C, 0x01}));
+  CHECK(r.servo.write_u16(1, STS::REG_START_TORQUE, 0x012C) == Result::OK);
+  CHECK(r.port.tx_log().size() == 2);
+  CHECK((r.port.tx_log()[0] == Bytes{0xFF, 0xFF, 0x01, 0x05, 0x03, 0x18, 0x2C, 0x01, 0xB1}));
+  CHECK((r.port.tx_log()[1] == Bytes{0xFF, 0xFF, 0x01, 0x04, 0x02, 0x18, 0x02, 0xDE}));
+
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.script_reply(frame(1, 0, {0x2D, 0x01}));
+  CHECK(r.servo.write_u16(1, STS::REG_START_TORQUE, 0x012C) == Result::VERIFY_FAILED);
+  CHECK(r.port.tx_log().size() == 4);
+
+  // Through the generic interface, raw write.
+  Servo& s = r.servo;
+  const uint8_t v = 7;
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.script_reply(frame(1, 0, {7}));
+  CHECK(s.verify_writes());
+  CHECK(s.write_raw(STS::REG_POS_COEF_P, &v, 1) == Result::OK);
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.script_reply(frame(1, 0, {8}));
+  CHECK(s.write_raw(STS::REG_POS_COEF_P, &v, 1) == Result::VERIFY_FAILED);
+  CHECK(r.port.tx_log().size() == 8);
+}
+
+static void test_verify_failures() {
+  Rig r;
+  r.servo.set_verify_writes(true);
+  // Read-back times out: its own error, the write took effect.
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.script_timeout();
+  CHECK(r.servo.write_u8(1, STS::REG_POS_COEF_P, 5) == Result::TIMEOUT);
+  CHECK(r.port.tx_log().size() == 2);
+
+  // Read-back reports a servo error status.
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.script_reply(frame(1, 0x20, {5}));
+  CHECK(r.servo.write_u8(1, STS::REG_POS_COEF_P, 5) == Result::BAD_RESPONSE);
+
+  // Read-back transport failure.
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.fail_next_read();
+  CHECK(r.servo.write_u8(1, STS::REG_POS_COEF_P, 5) == Result::BUS);
+
+  // Write failure: no read frame follows.
+  Rig w;
+  w.servo.set_verify_writes(true);
+  w.port.script_timeout();
+  CHECK(w.servo.write_u8(1, STS::REG_POS_COEF_P, 5) == Result::TIMEOUT);
+  CHECK(w.port.tx_log().size() == 1);
+  w.port.fail_next_write();
+  CHECK(w.servo.write_u8(1, STS::REG_POS_COEF_P, 5) == Result::BUS);
+  CHECK(w.port.tx_log().size() == 1);
+}
+
+static void test_verify_masks_and_skips() {
+  Rig r;
+  r.servo.set_verify_writes(true);
+  // Bits outside the REG_PHASE mask may differ.
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.script_reply(frame(1, 0, {(uint8_t)(0x10 ^ 0x08 ^ 0x40)}));
+  CHECK(r.servo.write_u8(1, STS::REG_PHASE, 0x10) == Result::OK);
+  // A bit inside the mask may not.
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.script_reply(frame(1, 0, {0x00}));
+  CHECK(r.servo.write_u8(1, STS::REG_PHASE, 0x10) == Result::VERIFY_FAILED);
+  // Torque enable calibration value 128 reads back with bit 0 clear.
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.script_reply(frame(1, 0, {0x00}));
+  CHECK(r.servo.write_u8(1, STS::REG_SERVO_EN, 128) == Result::OK);
+  const size_t before = r.port.tx_log().size();
+
+  // Volatile, read-only and unknown registers are written without a read.
+  r.port.script_reply(frame(1, 0, {}));
+  CHECK(r.servo.write_u16(1, STS::REG_CTRL_POS, 100) == Result::OK);
+  r.port.script_reply(frame(1, 0, {}));
+  CHECK(r.servo.write_u8(1, STS::REG_CTRL_ACCEL, 5) == Result::OK);
+  r.port.script_reply(frame(1, 0, {}));
+  CHECK(r.servo.write_u8(1, STS::REG_POSITION, 5) == Result::OK);
+  r.port.script_reply(frame(1, 0, {}));
+  CHECK(r.servo.write_u8(1, 0xC0, 5) == Result::OK);
+  CHECK(r.port.tx_log().size() == before + 4);
+}
+
+static void test_verify_span() {
+  Rig r;
+  r.servo.set_verify_writes(true);
+  // REG_CTRL_ACCEL and REG_CTRL_POS are volatile: no read.
+  const uint8_t vol[3] = {1, 2, 3};
+  r.port.script_reply(frame(1, 0, {}));
+  CHECK(r.servo.write_register(1, STS::REG_CTRL_ACCEL, vol, 3) == Result::OK);
+  CHECK(r.port.tx_log().size() == 1);
+
+  // Four stable bytes from 0x23: one read of the whole span, all compared.
+  const uint8_t st[4] = {1, 2, 3, 4};
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.script_reply(frame(1, 0, {1, 2, 3, 4}));
+  CHECK(r.servo.write_register(1, STS::REG_OVERLOAD_TIME, st, 4) == Result::OK);
+  CHECK(r.port.tx_log().size() == 3);
+  CHECK((r.port.tx_log()[2] == Bytes{0xFF, 0xFF, 0x01, 0x04, 0x02, 0x23, 0x04, 0xD1}));
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.script_reply(frame(1, 0, {1, 2, 3, 5}));
+  CHECK(r.servo.write_register(1, STS::REG_OVERLOAD_TIME, st, 4) == Result::VERIFY_FAILED);
+
+  // 0x27 stable, 0x28 masked (bit 0), 0x29 volatile.
+  const uint8_t mix[3] = {9, 8, 7};
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.script_reply(frame(1, 0, {9, 8, 0}));
+  CHECK(r.servo.write_register(1, STS::REG_SPEED_COEF_I, mix, 3) == Result::OK);
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.script_reply(frame(1, 0, {9, 9, 0}));
+  CHECK(r.servo.write_register(1, STS::REG_SPEED_COEF_I, mix, 3) == Result::VERIFY_FAILED);
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.script_reply(frame(1, 0, {10, 8, 7}));
+  CHECK(r.servo.write_register(1, STS::REG_SPEED_COEF_I, mix, 3) == Result::VERIFY_FAILED);
+}
+
+static void test_verify_new_device_id() {
+  Rig r;
+  r.servo.set_verify_writes(true);
+  r.port.script_reply(frame(1, 0, {}));
+  r.port.script_reply(frame(2, 0, {2}));
+  CHECK(r.servo.write_u8(1, STS::REG_DEVICE_ID, 2) == Result::OK);
+  CHECK((r.port.tx_log()[1] == Bytes{0xFF, 0xFF, 0x02, 0x04, 0x02, 0x05, 0x01, 0xF1}));
+}
+
+static void test_verify_rule_table() {
+  using VC = STSServo::VerifyClass;
+  struct Row {
+    uint16_t addr;
+    uint8_t bytes;
+    VC kind;
+    uint8_t mask;
+  };
+  const Row rows[] = {
+      {STS::REG_DEVICE_ID, 1, VC::STABLE, 0xFF},
+      {STS::REG_BAUD_RATE, 1, VC::VOLATILE, 0},
+      {STS::REG_RESPONSE_DELAY, 1, VC::STABLE, 0xFF},
+      {STS::REG_RESPONSE_MODE, 1, VC::STABLE, 0xFF},
+      {STS::REG_MIN_ANGLE_THRESH, 2, VC::STABLE, 0xFF},
+      {STS::REG_MAX_ANGLE_THRESH, 2, VC::STABLE, 0xFF},
+      {STS::REG_OVERTEMP_THRESH, 1, VC::STABLE, 0xFF},
+      {STS::REG_OVERVOLT_THRESH, 1, VC::STABLE, 0xFF},
+      {STS::REG_UNDERVOLT_THRESH, 1, VC::STABLE, 0xFF},
+      {STS::REG_CONTROL_TORQUE_NV, 2, VC::STABLE, 0xFF},
+      {STS::REG_PHASE, 1, VC::STABLE_MASKED, STSServo::PHASE_VERIFY_MASK},
+      {STS::REG_UNLOAD_ALARM_MASK, 1, VC::STABLE, 0xFF},
+      {STS::REG_LED_ALARM_MASK, 1, VC::STABLE, 0xFF},
+      {STS::REG_POS_COEF_P, 1, VC::STABLE, 0xFF},
+      {STS::REG_POS_COEF_D, 1, VC::STABLE, 0xFF},
+      {STS::REG_POS_COEF_I, 1, VC::STABLE, 0xFF},
+      {STS::REG_START_TORQUE, 2, VC::STABLE, 0xFF},
+      {STS::REG_CW_DEADZONE, 1, VC::STABLE, 0xFF},
+      {STS::REG_CCW_DEADZONE, 1, VC::STABLE, 0xFF},
+      {STS::REG_OVERCURR_THRESH, 2, VC::STABLE, 0xFF},
+      {STS::REG_ANGLE_RESOLUTION, 1, VC::STABLE, 0xFF},
+      {STS::REG_POS_OFFSET, 2, VC::STABLE, 0xFF},
+      {STS::REG_OPERATION_MODE, 1, VC::STABLE, 0xFF},
+      {STS::REG_UNLOAD_CTRL_TORQUE, 1, VC::STABLE, 0xFF},
+      {STS::REG_OVERLOAD_TIME, 1, VC::STABLE, 0xFF},
+      {STS::REG_OVERLOAD_THRESH, 1, VC::STABLE, 0xFF},
+      {STS::REG_SPEED_COEF_P, 1, VC::STABLE, 0xFF},
+      {STS::REG_OVERCURR_TIME, 1, VC::STABLE, 0xFF},
+      {STS::REG_SPEED_COEF_I, 1, VC::STABLE, 0xFF},
+      {STS::REG_SERVO_EN, 1, VC::STABLE_MASKED, STSServo::SERVO_EN_VERIFY_MASK},
+      {STS::REG_CTRL_ACCEL, 1, VC::VOLATILE, 0},
+      {STS::REG_CTRL_POS, 2, VC::VOLATILE, 0},
+      {STS::REG_CTRL_PWM, 2, VC::VOLATILE, 0},
+      {STS::REG_CTRL_SPEED, 2, VC::VOLATILE, 0},
+      {STS::REG_CTRL_TORQUE, 2, VC::VOLATILE, 0},
+      {STS::REG_EEPROM_LOCK, 1, VC::STABLE, 0xFF},
+      // Read-only registers and gaps are not compared.
+      {STS::REG_VER_MAJ, 1, VC::VOLATILE, 0},
+      {STS::REG_MODEL_MAJ, 2, VC::VOLATILE, 0},
+      {STS::REG_POSITION, 2, VC::VOLATILE, 0},
+      {STS::REG_SPEED, 2, VC::VOLATILE, 0},
+      {STS::REG_LOAD, 2, VC::VOLATILE, 0},
+      {STS::REG_VOLTAGE, 1, VC::VOLATILE, 0},
+      {STS::REG_TEMPERATURE, 1, VC::VOLATILE, 0},
+      {STS::REG_STATUS, 1, VC::VOLATILE, 0},
+      {STS::REG_MOVE_FLAG, 1, VC::VOLATILE, 0},
+      {STS::REG_CURRENT, 2, VC::VOLATILE, 0},
+      {0x02, 1, VC::VOLATILE, 0},
+      {0x100, 1, VC::VOLATILE, 0},
+  };
+  for (const Row& row : rows) {
+    for (uint8_t i = 0; i < row.bytes; ++i) {
+      const STSServo::VerifyRule v = STSServo::verify_rule(row.addr + i);
+      CHECK(v.kind == row.kind && v.mask == row.mask);
+    }
+  }
+  CHECK((STSServo::PHASE_VERIFY_MASK & STSServo::PHASE_MULTITURN_BIT) != 0);
+}
+
 int main() {
   test_ping();
   test_read();
@@ -250,6 +458,13 @@ int main() {
   test_bus_failure();
   test_ranges_and_params();
   test_no_controller_and_ownership();
+  test_verify_off_and_default();
+  test_verify_match_and_mismatch();
+  test_verify_failures();
+  test_verify_masks_and_skips();
+  test_verify_span();
+  test_verify_new_device_id();
+  test_verify_rule_table();
   if (g_failures) {
     std::printf("%d failure(s)\n", g_failures);
     return 1;

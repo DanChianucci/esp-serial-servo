@@ -10,6 +10,7 @@
 //    when any one of their transactions fails (writes stop at the first failure), and read_telemetry leaves its output untouched;
 //  - null output pointers return PARAM;
 //  - set_persist agrees with Feature::PERSIST_CONFIG;
+//  - set_verify_writes and verify_writes agree with Feature::VERIFY_WRITES;
 //  - limits are populated for the features that use them.
 #ifndef SERVO_CONFORMANCE__H
 #define SERVO_CONFORMANCE__H
@@ -142,6 +143,17 @@ inline int run_servo_conformance(servokit::Servo& s, const ConformanceHooks& h, 
       CONF_CHECK(h.frames_sent() == 0);
     }
   }
+
+  // Write verification: off by default, and settable exactly when advertised.
+  h.reset();
+  CONF_CHECK(!s.verify_writes());
+  const Result verify_on = s.set_verify_writes(true);
+  CONF_CHECK((verify_on == Result::OK) == f.has(Feature::VERIFY_WRITES));
+  CONF_CHECK(verify_on == Result::OK || verify_on == Result::UNSUPPORTED);
+  CONF_CHECK(s.verify_writes() == f.has(Feature::VERIFY_WRITES));
+  CONF_CHECK(s.set_verify_writes(false) == verify_on);
+  CONF_CHECK(!s.verify_writes());
+  CONF_CHECK(h.frames_sent() == 0);
 
   // set_persist(false) agrees with set_persist(true).
   h.reset();
