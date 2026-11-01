@@ -39,8 +39,9 @@ uses `core`; `core` uses nothing. `platform` implements `serial`'s
 | 3. Raw | `read_raw`/`write_raw` on `Servo&`, or `read_register`/`write_register`/`read_u8`/`read_u16`/`write_u8`/`write_u16` on `STSServo` | Register bytes | You need a register no helper covers. |
 
 `STSServo` derives from `Servo`, so the three tiers can be mixed on one object.
-Every call, in every tier, is a synchronous bus transaction that returns a
-[`Result`](api.md#result).
+Every call that talks to the servo is a synchronous bus transaction that
+returns a [`Result`](api.md#result); accessors such as `capabilities()` touch no
+bus.
 
 ## Building the stack
 
@@ -96,8 +97,9 @@ They are built and run with the host tests (`tests/host/CMakeLists.txt`).
 - **No emulation.** A servo reports what it does in
   `Capabilities::features`; an operation it lacks returns `UNSUPPORTED`. See
   [capabilities](api.md#capabilities-and-features).
-- **Writes are written as given.** No hidden reads, no read-compare-write, no
-  automatic EEPROM lock handling. See [write semantics](api.md#write-semantics).
+- **Writes are written as given.** No read-compare-write and no automatic
+  EEPROM lock handling. Reads happen only where documented: `hold()`, the
+  multi-turn setter, and opt-in write verification. See [write semantics](api.md#write-semantics).
 - **Atomic telemetry.** `read_telemetry()` returns every field or fails as a
   whole.
 - **Not thread-safe.** Serialize all calls per bus.

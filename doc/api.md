@@ -215,7 +215,7 @@ any feature without an implementation.
 if the matching feature is set, otherwise 0. STS values: angle
 -30719..+30719 steps converted to mdeg, `resolution_mdeg` 88 (87.890625
 rounded), maximum speed 3400 steps/s and acceleration 254 units converted to
-mdeg, `max_torque_permille` 1000, current range +-the largest 15-bit current
+mdeg/s and mdeg/s², `max_torque_permille` 1000, current range +-the largest 15-bit current
 feedback in mA (the reportable range; the settable stall threshold is
 narrower), `reportable_alarms` from `reportable_alarms()`.
 
