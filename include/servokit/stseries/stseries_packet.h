@@ -26,6 +26,9 @@ class STSeriesPacket : public ServoPacket {
   virtual srv_stat_t reset();
 
   virtual bool is_well_formed();
+  virtual bool is_frame_valid();
+  virtual bool is_checksum_valid();
+  virtual int packet_device_id();
 
   uint8_t compute_checksum();
   uint8_t compute_length();

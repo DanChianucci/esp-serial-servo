@@ -25,6 +25,16 @@ class ServoPacket {
    */
   virtual bool is_well_formed()=0;
 
+  /** Frame-level validity: size, sync and length, but NOT the checksum.
+   *  Default: same as is_well_formed() (families without a separate checksum). */
+  virtual bool is_frame_valid() { return is_well_formed(); }
+
+  /** True if the stored checksum matches the content. Default: true (no checksum). */
+  virtual bool is_checksum_valid() { return true; }
+
+  /** Device ID carried by the packet, or -1 if the family has none. */
+  virtual int packet_device_id() { return -1; }
+
   /** Resets the packet to a known state containing only the sync header
    * @return SRV_OK always.
    */

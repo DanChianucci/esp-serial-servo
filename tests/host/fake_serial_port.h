@@ -43,6 +43,7 @@ class FakeSerialPort : public servokit::SerialPort {
   bool rx_enabled() const { return m_rx_enabled; }
   int discard_count() const { return m_discards; }
   int flush_count() const { return m_flushes; }
+  timeout_duration_t last_write_timeout() const { return m_last_write_timeout; }
 
   // --- SerialPort ---
   servokit::srv_stat_t enable_rx(bool enable) override {
@@ -86,7 +87,8 @@ class FakeSerialPort : public servokit::SerialPort {
     return static_cast<int>(n);
   }
 
-  servokit::srv_result_t write_bytes(const buffer_const_t data, timeout_duration_t) override {
+  servokit::srv_result_t write_bytes(const buffer_const_t data, timeout_duration_t timeout) override {
+    m_last_write_timeout = timeout;
     if (m_fail_write) {
       m_fail_write = false;
       return servokit::srv_result_t(std::unexpected(servokit::SRV_WRITE_FAIL.error()));
@@ -109,6 +111,7 @@ class FakeSerialPort : public servokit::SerialPort {
   bool m_fail_read = false;
   int m_discards = 0;
   int m_flushes = 0;
+  timeout_duration_t m_last_write_timeout = timeout_duration_t::zero();
 };
 
 }  // namespace servokit_test

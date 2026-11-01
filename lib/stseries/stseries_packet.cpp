@@ -62,12 +62,19 @@ buffer_t STSeriesPacket::data_buffer() { return m_buffer.subspan(NUM_SYNC_BYTES)
 //<> Validation
 // ##############################################################################
 
-bool STSeriesPacket::is_well_formed() {
+bool STSeriesPacket::is_well_formed() { return is_frame_valid() && is_checksum_valid(); }
+
+bool STSeriesPacket::is_frame_valid() {
   return (size() >= NUM_META_BYTES) &&  // 1. Packet at least 6 bytes
          (get_sync() == SYNC_PATTERN) &&
-         (get_length() == compute_length()) &&    // 2. Length field matches actual packet length
-         (get_checksum() == compute_checksum());  // 3. Checksum field matches expected
+         (get_length() == compute_length());  // 2. Length field matches actual packet length
 }
+
+bool STSeriesPacket::is_checksum_valid() {
+  return (size() >= NUM_META_BYTES) && (get_checksum() == compute_checksum());  // 3. Checksum matches
+}
+
+int STSeriesPacket::packet_device_id() { return (size() > DEVID_IDX) ? get_device_id() : -1; }
 
 uint8_t STSeriesPacket::compute_checksum() {
   return ~std::accumulate(m_buffer.begin() + NUM_SYNC_BYTES, m_buffer.begin() + m_size - 1, 0);
