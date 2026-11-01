@@ -41,3 +41,16 @@ target_include_directories(test_sts_servo PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../../include)
 target_compile_options(test_sts_servo PRIVATE -Wall -Wextra)
 add_test(NAME test_sts_servo COMMAND test_sts_servo)
+
+add_executable(test_sts_family
+  test_sts_family.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/serial/servo_controller.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/serial/servo_packet.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/stseries_packet.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo_family.cpp)
+target_include_directories(test_sts_family PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../include)
+target_compile_options(test_sts_family PRIVATE -Wall -Wextra)
+add_test(NAME test_sts_family COMMAND test_sts_family)
