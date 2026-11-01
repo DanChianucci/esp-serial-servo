@@ -39,7 +39,10 @@ typedef enum {
   CMD_SYNC_WRITE = 0x83
 } cmd_e;
 
-// STSeries Alarm / Status Codes
+// STSeries Alarm / Status Codes. One bit per fault; the same layout is used by the
+// status byte of every response, REG_STATUS, REG_LED_ALARM_MASK (bit set = that
+// fault flashes the LED) and REG_UNLOAD_ALARM_MASK (bit set = that fault releases
+// torque). Source: ST3215 memory table, registers 0x13, 0x14 and 0x41.
 typedef enum {
   STAT_OK = 0x00,             // No Error
   STAT_VOLTAGE = 1 << 0,      // Voltage Error
@@ -49,6 +52,7 @@ typedef enum {
   STAT_ANGLE = 1 << 4,        // Angle Error
   STAT_OVERLOAD = 1 << 5      // Overload Error
 } err_code_t;
+typedef err_code_t sts_err_code_t;
 
 // Constants for `REG_RESPONSE_MODE`
 typedef enum {

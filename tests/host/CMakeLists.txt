@@ -29,3 +29,15 @@ target_include_directories(test_transaction PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../../include)
 target_compile_options(test_transaction PRIVATE -Wall -Wextra)
 add_test(NAME test_transaction COMMAND test_transaction)
+
+add_executable(test_sts_servo
+  test_sts_servo.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/serial/servo_controller.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/serial/servo_packet.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/stseries_packet.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo.cpp)
+target_include_directories(test_sts_servo PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../include)
+target_compile_options(test_sts_servo PRIVATE -Wall -Wextra)
+add_test(NAME test_sts_servo COMMAND test_sts_servo)
