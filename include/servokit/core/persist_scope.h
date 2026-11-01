@@ -18,8 +18,10 @@ namespace servokit {
  *
  *  Construction calls set_persist(true). Unlocking is explicit: check ok() or
  *  result() before relying on persistence. The relock (set_persist(false)) is
- *  made at destruction or by close(), and only when the unlock succeeded, so
- *  every exit path of the enclosing scope relocks.
+ *  made at destruction or by close(), and only when the unlock returned OK, so
+ *  every exit path of the enclosing scope relocks after a confirmed unlock. An
+ *  unlock that returned an error (for example a timeout) may still have taken
+ *  effect; in that case call set_persist(false) explicitly.
  *
  *  Blocking, timeouts and errors are those of Servo::set_persist(). Not
  *  thread-safe; serialize with the other calls on the same bus. The Servo is

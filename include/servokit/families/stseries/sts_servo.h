@@ -400,8 +400,8 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
   Result identify(Identity* out) override;
 
   /** MotionMode::ABSOLUTE_POSITION writes REG_OPERATION_MODE = OP_SERVO (one
-   *  plain write, no reads). That OP_SERVO is the right mode for the generic
-   *  operations is not verified on hardware. Any other value returns
+   *  plain write, no reads). Hardware has not confirmed that OP_SERVO is the
+   *  right mode for the generic operations. Any other value returns
    *  OUT_OF_RANGE and sends nothing. */
   Result set_mode(MotionMode mode) override;
 
