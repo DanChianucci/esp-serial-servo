@@ -6,6 +6,8 @@
   #include "serial_servo/base/servo_controller.h"
   #include "serial_servo/base/servo_packet.h"
   #include "serial_servo/base/servo_utils.h"
+  #include "serial_servo/base/servo_types.h"
+  #include "serial_servo/base/servo.h"
 
   #include "serial_servo/stseries.h"
 
