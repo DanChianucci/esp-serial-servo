@@ -73,18 +73,18 @@ static void test_sram_helpers() {
   {
     Rig r;  // acceleration: 0x29, 1 byte, 0..254
     r.ack();
-    expect_single_write(r, r.servo.set_acceleration_units(254), 0x29, {254});
+    expect_single_write(r, r.servo.set_acceleration_native(254), 0x29, {254});
     r.ack();
-    CHECK(r.servo.set_acceleration_units(0) == Result::OK && r.tx(1) == write_cmd(0x29, {0}));
-    CHECK(r.servo.set_acceleration_units(255) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_acceleration_native(0) == Result::OK && r.tx(1) == write_cmd(0x29, {0}));
+    CHECK(r.servo.set_acceleration_native(255) == Result::OUT_OF_RANGE);
     CHECK(r.sent() == 2);
   }
   {
     Rig r;  // speed: 0x2E, 2 bytes LE, 0..3400
     r.ack();
-    expect_single_write(r, r.servo.set_speed_steps(3400), 0x2E, {0x48, 0x0D});
-    CHECK(r.servo.set_speed_steps(3401) == Result::OUT_OF_RANGE);
-    CHECK(r.servo.set_speed_steps(0xFFFF) == Result::OUT_OF_RANGE);
+    expect_single_write(r, r.servo.set_speed_native(3400), 0x2E, {0x48, 0x0D});
+    CHECK(r.servo.set_speed_native(3401) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_speed_native(0xFFFF) == Result::OUT_OF_RANGE);
     CHECK(r.sent() == 1);
   }
   {

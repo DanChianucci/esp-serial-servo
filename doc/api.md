@@ -498,8 +498,8 @@ reset at power-up, "EEPROM" registers follow the lock.
 | `get_response_mode(rsp_mode_t*)`, `set_response_mode(rsp_mode_t)` | `RSP_READ_PING` stops write acknowledgements. The firmware adapter must call `set_response_mode(STS::RSP_ALL)` at boot so that writes are acknowledged; no generic call does it. |
 | `get_response_delay(uint8_t*)`, `set_response_delay(delay_2us)` | Units of 2 us, 0..254. |
 | `get_servo_enabled(bool*)`, `set_servo_enabled(bool)` | Torque output on/off (SRAM). Never writes the mid-point calibration value. `get_servo_enabled` returns `BAD_RESPONSE` if the register holds neither 0 nor 1. |
-| `set_acceleration_units(accel)` | 0..254, units of 100 steps/s^2 (SRAM). |
-| `set_speed_steps(steps_per_s)` | 0..3400, unsigned magnitude for position moves (SRAM). |
+| `set_acceleration_native(accel)` | 0..254, units of 100 steps/s^2 (SRAM). |
+| `set_speed_native(steps_per_s)` | 0..3400, unsigned magnitude for position moves (SRAM). |
 | `set_signed_speed(steps_per_s)` | -3400..3400, bit 15 = reverse, for constant-speed mode (SRAM). |
 | `set_target_position(steps)` | -30719..30719 steps, sign-magnitude, 4096 per revolution (SRAM). |
 | `get_eeprom_locked(bool*)` | `BAD_RESPONSE` if neither 0 nor 1. |

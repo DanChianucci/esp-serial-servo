@@ -73,12 +73,12 @@ Result STSServo::set_servo_enabled(bool enabled) {
   return write_u8(m_id, STS::REG_SERVO_EN, enabled ? STS::SERVO_ENABLE : STS::SERVO_DISABLE);
 }
 
-Result STSServo::set_acceleration_units(uint8_t accel) {
+Result STSServo::set_acceleration_native(uint8_t accel) {
   if (accel > MAX_ACCELERATION) return Result::OUT_OF_RANGE;
   return write_u8(m_id, STS::REG_CTRL_ACCEL, accel);
 }
 
-Result STSServo::set_speed_steps(uint16_t steps_per_s) {
+Result STSServo::set_speed_native(uint16_t steps_per_s) {
   if (steps_per_s > MAX_SPEED) return Result::OUT_OF_RANGE;
   return write_u16(m_id, STS::REG_CTRL_SPEED, steps_per_s);
 }

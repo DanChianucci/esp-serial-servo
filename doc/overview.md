@@ -35,7 +35,7 @@ uses `core`; `core` uses nothing. `platform` implements `serial`'s
 | Tier | Entry point | Units | Use it when |
 |---|---|---|---|
 | 1. Generic | `Servo&` | mdeg, mdeg/s, mA, mV, permille | The application should not care which servo family is attached. |
-| 2. Family | `STSServo` typed helpers (`set_speed_steps`, `set_target_position`, `unlock_eeprom`, ...) | The family's native register units | You need an STS feature the generic interface does not model. |
+| 2. Family | `STSServo` typed helpers (`set_speed_native`, `set_target_position`, `unlock_eeprom`, ...) | The family's native register units | You need an STS feature the generic interface does not model. |
 | 3. Registers | `RegisterAccess*` from `Servo::get_registers()` (`read_register`, `write_register`, `read_u8`, `read_u16`, `write_u8`, `write_u16`), or the same calls with an explicit ID on `STSServo` | Register bytes | You need a register no helper covers. |
 
 `STSServo` derives from `Servo`, `RegisterAccess` and `SerialLink`, so the three

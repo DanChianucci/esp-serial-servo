@@ -125,13 +125,13 @@ Result STSServo::set_protect_release_alarms(AlarmSet alarms) {
 Result STSServo::set_speed(uint32_t mdeg_s) {
   const uint32_t steps = STS::units::mdeg_s_to_steps_s(mdeg_s);
   if (steps > MAX_SPEED) return Result::OUT_OF_RANGE;
-  return set_speed_steps(static_cast<uint16_t>(steps));
+  return set_speed_native(static_cast<uint16_t>(steps));
 }
 
 Result STSServo::set_acceleration(uint32_t mdeg_s2) {
   const uint32_t units = STS::units::mdeg_s2_to_accel_units(mdeg_s2);
   if (units > MAX_ACCELERATION) return Result::OUT_OF_RANGE;
-  return set_acceleration_units(static_cast<uint8_t>(units));
+  return set_acceleration_native(static_cast<uint8_t>(units));
 }
 
 Result STSServo::cancel_motion() {
