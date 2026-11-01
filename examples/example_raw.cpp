@@ -1,4 +1,4 @@
-// Tier 3: raw register access, with no unit conversion. Use it for registers
+// Tier 3: register access, with no unit conversion. Use it for registers
 // the typed helpers do not cover.
 #include <chrono>
 #include <cstdio>
@@ -30,17 +30,19 @@ int main() {
   // 16-bit registers are little endian; write_u16 handles the byte order.
   EXPECT(sts.write_u16(7, STS::REG_CTRL_SPEED, 1000) == Result::OK);
 
-  // Generic API: raw access to the servo selected by device_id(), through
-  // Servo&. Addresses and meaning are family-defined.
+  // Generic API: register access to the servo selected by get_device_id(),
+  // through Servo::get_registers(). Addresses and meaning are family-defined.
   Servo& servo = sts;
+  RegisterAccess* regs = servo.get_registers();
+  EXPECT(regs != nullptr);  // non-null because the servo sets Feature::REGISTER_ACCESS
   uint8_t value = 0;
-  EXPECT(servo.read_raw(STS::REG_TEMPERATURE, &value, 1) == Result::OK);
+  EXPECT(regs->read_register(STS::REG_TEMPERATURE, &value, 1) == Result::OK);
   EXPECT(value == 0x2A);
   const uint8_t accel = 10;  // units of 100 steps/s^2
-  EXPECT(servo.write_raw(STS::REG_CTRL_ACCEL, &accel, 1) == Result::OK);
+  EXPECT(regs->write_register(STS::REG_CTRL_ACCEL, &accel, 1) == Result::OK);
 
   // Spans outside the control table are rejected before anything is sent.
-  EXPECT(servo.read_raw(0xFF, &value, 2) == Result::OUT_OF_RANGE);
+  EXPECT(regs->read_register(0xFF, &value, 2) == Result::OUT_OF_RANGE);
   EXPECT(port.tx_log().size() == 4);
   return failures() == 0 ? 0 : 1;
 }

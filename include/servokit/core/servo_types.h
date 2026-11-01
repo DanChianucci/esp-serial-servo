@@ -193,13 +193,13 @@ enum class Feature : uint64_t {
   SYNC_READ = 1ull << 34,
   ASYNC_WRITE = 1ull << 35,
   BROADCAST = 1ull << 36,
-  RAW_REGISTERS = 1ull << 37,
+  REGISTER_ACCESS = 1ull << 37,  ///< Servo::get_registers() returns a RegisterAccess
   // Behaviour
   RETAINS_POSITION_UNPOWERED = 1ull << 38,
   // Configuration storage
   PERSIST_CONFIG = 1ull << 39,  ///< set_persist() controls whether configuration writes survive power loss
   // Write checking
-  VERIFY_WRITES = 1ull << 40  ///< set_verify_writes() makes writes read back and compare
+  READBACK_CHECK = 1ull << 40  ///< RegisterAccess::set_readback_check() makes writes read back and compare
 };
 
 /** Bitmask of Feature values. */
@@ -257,13 +257,14 @@ struct Limits {
   uint32_t max_speed_mdeg_s = 0;     ///< Maximum speed (SET_SPEED)
   uint32_t max_accel_mdeg_s2 = 0;    ///< Maximum acceleration (SET_ACCEL)
   uint16_t max_torque_permille = 0;  ///< Maximum torque limit (TORQUE_LIMIT), 1000 = full
+  uint32_t max_torque_mnm = 0;       ///< Informational stall torque in mN*m at the voltage the model's documentation states; 0 = unknown. Commands use permille, never this value
   int32_t current_min_ma = 0;        ///< Lowest reportable current (READ_CURRENT); a settable threshold may span less
   int32_t current_max_ma = 0;        ///< Highest reportable current
   AlarmSet reportable_alarms;        ///< Alarms this servo can actually report
 };
 
 /** What the connected servo does. Static per model; may depend on the result
- *  of Servo::read_identity(). */
+ *  of Servo::identify(). */
 struct Capabilities {
   FeatureSet features;  ///< What this servo supports
   Limits limits;        ///< Numbers; each valid only if its feature is set

@@ -4,7 +4,7 @@
 
 #include "fake_serial_port.h"
 #include "servokit/serial/servo_controller.h"
-#include "servokit/stseries/stseries_packet.h"
+#include "servokit/families/stseries/stseries_packet.h"
 
 static int g_failures = 0;
 #define CHECK(cond)                                               \
@@ -64,11 +64,11 @@ static void test_flush_and_stale() {
 
 static void test_timeouts() {
   Rig r;
-  CHECK(r.ctl.transaction_timeout() == milliseconds(30));
+  CHECK(r.ctl.get_transaction_timeout() == milliseconds(30));
   CHECK(r.ctl.set_transaction_timeout(milliseconds(0)).error() == SRV_PARAM_ERR.error());
-  CHECK(r.ctl.transaction_timeout() == milliseconds(30));
+  CHECK(r.ctl.get_transaction_timeout() == milliseconds(30));
   CHECK(r.ctl.set_transaction_timeout(milliseconds(50)).error() == SRV_OK.error());
-  CHECK(r.ctl.transaction_timeout() == milliseconds(50));
+  CHECK(r.ctl.get_transaction_timeout() == milliseconds(50));
 
   // No answer: finite TIMEOUT.
   r.port.script_timeout();
@@ -102,29 +102,29 @@ static void test_timeouts() {
 
 static void test_checksum_option() {
   Rig r;
-  CHECK(r.ctl.verify_checksum());
-  CHECK(r.ctl.checksum_errors() == 0);
+  CHECK(r.ctl.get_verify_checksum());
+  CHECK(r.ctl.get_checksum_errors() == 0);
 
   // Default: bad checksum rejected and counted.
   r.port.script_reply(frame(1, 0, {7}, false));
   auto res = r.run();
   CHECK(!res.has_value() && res.error() == SRV_BAD_CHECKSUM.error());
   CHECK(to_result(res) == Result::BAD_RESPONSE);
-  CHECK(r.ctl.checksum_errors() == 1);
+  CHECK(r.ctl.get_checksum_errors() == 1);
 
   // Good frame: accepted, no count.
   r.port.script_reply(frame(1, 0, {7}));
   CHECK(r.run().has_value());
-  CHECK(r.ctl.checksum_errors() == 1);
+  CHECK(r.ctl.get_checksum_errors() == 1);
 
   // Disabled: accepted, still counted.
   r.ctl.set_verify_checksum(false);
-  CHECK(!r.ctl.verify_checksum());
+  CHECK(!r.ctl.get_verify_checksum());
   r.port.script_reply(frame(1, 0, {7}, false));
   res = r.run();
   CHECK(res.has_value());
   CHECK(r.rsp.get_data_byte(0) == 7);
-  CHECK(r.ctl.checksum_errors() == 2);
+  CHECK(r.ctl.get_checksum_errors() == 2);
 
   // Disabled: bad ID still rejected.
   r.port.script_reply(frame(2, 0, {7}, false));
@@ -204,7 +204,7 @@ static void test_huge_durations() {
   // Constructor with huge timeouts saturates instead of overflowing.
   FakeSerialPort port;
   ServoController big(&port, timeout_duration_t::max(), timeout_duration_t::max());
-  CHECK(big.transaction_timeout() == timeout_duration_t::max());
+  CHECK(big.get_transaction_timeout() == timeout_duration_t::max());
 }
 
 static void test_rx_reenabled_after_write_failure() {
@@ -217,7 +217,7 @@ static void test_rx_reenabled_after_write_failure() {
 
 static void test_id_mismatch_with_verification() {
   Rig r;
-  CHECK(r.ctl.verify_checksum());
+  CHECK(r.ctl.get_verify_checksum());
   r.port.script_reply(frame(2, 0, {7}));
   auto res = r.run();
   CHECK(!res.has_value() && res.error() == SRV_BAD_ID.error());

@@ -4,7 +4,7 @@
 #include <cstdint>
 
 #include "servokit/serial/servo_packet.h"
-#include "servokit/stseries/stseries_defines.h"
+#include "servokit/families/stseries/stseries_defines.h"
 
 namespace servokit {
 class ServoController;
@@ -28,7 +28,7 @@ class STSeriesPacket : public ServoPacket {
   virtual bool is_well_formed();
   virtual bool is_frame_valid();
   virtual bool is_checksum_valid();
-  virtual int packet_device_id();
+  virtual int get_packet_device_id();
 
   uint8_t compute_checksum();
   uint8_t compute_length();

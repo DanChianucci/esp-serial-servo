@@ -1,4 +1,4 @@
-#include "servokit/stseries/stseries_packet.h"
+#include "servokit/families/stseries/stseries_packet.h"
 
 #include <algorithm>
 #include <cassert>
@@ -65,16 +65,16 @@ buffer_t STSeriesPacket::data_buffer() { return m_buffer.subspan(NUM_SYNC_BYTES)
 bool STSeriesPacket::is_well_formed() { return is_frame_valid() && is_checksum_valid(); }
 
 bool STSeriesPacket::is_frame_valid() {
-  return (size() >= NUM_META_BYTES) &&  // 1. Packet at least 6 bytes
+  return (get_size() >= NUM_META_BYTES) &&  // 1. Packet at least 6 bytes
          (get_sync() == SYNC_PATTERN) &&
          (get_length() == compute_length());  // 2. Length field matches actual packet length
 }
 
 bool STSeriesPacket::is_checksum_valid() {
-  return (size() >= NUM_META_BYTES) && (get_checksum() == compute_checksum());  // 3. Checksum matches
+  return (get_size() >= NUM_META_BYTES) && (get_checksum() == compute_checksum());  // 3. Checksum matches
 }
 
-int STSeriesPacket::packet_device_id() { return (size() > DEVID_IDX) ? get_device_id() : -1; }
+int STSeriesPacket::get_packet_device_id() { return (get_size() > DEVID_IDX) ? get_device_id() : -1; }
 
 uint8_t STSeriesPacket::compute_checksum() {
   return ~std::accumulate(m_buffer.begin() + NUM_SYNC_BYTES, m_buffer.begin() + m_size - 1, 0);
@@ -159,13 +159,13 @@ srv_stat_t STSeriesPacket::update_length() { return set_length(compute_length())
 srv_stat_t STSeriesPacket::update_checksum() { return set_checksum(compute_checksum()); }
 
 srv_stat_t STSeriesPacket::set_byte(size_t idx, uint8_t val) {
-  SRV_RETURN_IF(capacity() <= idx, SRV_OVERFLOW);
+  SRV_RETURN_IF(get_capacity() <= idx, SRV_OVERFLOW);
   m_buffer[idx] = val;
   return SRV_OK;
 }
 
 srv_stat_t STSeriesPacket::set_word(size_t idx, uint16_t val) {
-  SRV_RETURN_IF(capacity() <= idx + 1, SRV_OVERFLOW);
+  SRV_RETURN_IF(get_capacity() <= idx + 1, SRV_OVERFLOW);
   m_buffer[0] = val >> 8;
   m_buffer[1] = val & 0xFF;
   return SRV_OK;

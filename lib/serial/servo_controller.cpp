@@ -148,8 +148,8 @@ srv_result_t ServoController::command_response(ServoPacket* cmd, ServoPacket* rs
 
   srv_result_t result = read_response(rsp, rsp_timeout);
   SRV_RETURN_ON_ERR(result);
-  const int cmd_id = cmd->packet_device_id();
-  const int rsp_id = rsp->packet_device_id();
+  const int cmd_id = cmd->get_packet_device_id();
+  const int rsp_id = rsp->get_packet_device_id();
   SRV_RETURN_IF(cmd_id >= 0 && rsp_id >= 0 && cmd_id != rsp_id, SRV_BAD_ID);
   return result;
 }

@@ -33,7 +33,7 @@ class ServoPacket {
   virtual bool is_checksum_valid() { return true; }
 
   /** Device ID carried by the packet, or -1 if the family has none. */
-  virtual int packet_device_id() { return -1; }
+  virtual int get_packet_device_id() { return -1; }
 
   /** Resets the packet to a known state containing only the sync header
    * @return SRV_OK always.
@@ -47,13 +47,13 @@ class ServoPacket {
   virtual srv_stat_t resize(size_t size);
 
   // The maximum capacity of the raw buffer
-  virtual size_t capacity();
+  virtual size_t get_capacity();
 
   // Returns a view into the raw buffer
-  virtual buffer_t raw_buffer();
+  virtual buffer_t get_raw_buffer();
 
   // The Actual size of the packet
-  virtual size_t size();
+  virtual size_t get_size();
 
   // Returns a view of the packet as a sequence of bytes
   virtual buffer_const_t as_bytes();

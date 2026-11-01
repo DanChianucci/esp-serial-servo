@@ -33,7 +33,7 @@
 #include <cstdint>
 
 #include "servokit/core/servo_types.h"
-#include "servokit/stseries/stseries_defines.h"
+#include "servokit/families/stseries/stseries_defines.h"
 
 namespace servokit {
 namespace STS {

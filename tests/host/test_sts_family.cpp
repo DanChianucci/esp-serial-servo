@@ -4,7 +4,7 @@
 #include <cstdio>
 
 #include "fake_serial_port.h"
-#include "servokit/stseries/sts_servo.h"
+#include "servokit/families/stseries/sts_servo.h"
 
 static int g_failures = 0;
 #define CHECK(cond)                                               \

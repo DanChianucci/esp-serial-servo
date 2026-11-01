@@ -17,10 +17,10 @@
 //      Blocking  Synchronous. One call is one command/response transaction,
 //                bounded by the controller's transaction budget; no retries.
 //      Threads   Not thread-safe, and neither is the bus. Serialize all calls
-//                per bus (including checksum accessors).
+//                per bus (including the SerialLink and RegisterAccess calls).
 //      Errors    Returned, never thrown: TIMEOUT (no complete response),
 //                BAD_RESPONSE (framing, checksum, wrong ID, wrong length, or
-//                the servo reported an error status; see last_status()),
+//                the servo reported an error status; see get_last_status()),
 //                OUT_OF_RANGE (register span outside the control table),
 //                PARAM (null pointer, empty or oversized span, broadcast or
 //                invalid ID, no controller), BUS (transport failure).
@@ -30,17 +30,17 @@
 //                reply to writes; write calls then return TIMEOUT even though
 //                the write took effect.
 //
-//    Write verification (set_verify_writes(), off by default):
+//    Readback check (set_readback_check(), off by default):
 //      Effect    After a successful write of a register span, one read of the
 //                same span is sent and each byte is compared with the byte
-//                written, through that byte's compare mask (see verify_rule()).
+//                written, through that byte's compare mask (see readback_rule()).
 //                The read is addressed to the written ID, except that a write
 //                covering REG_DEVICE_ID reads from the newly written ID. When
 //                that ID is above STS::MAX_ID (0xFC) the servo cannot be
 //                addressed, so nothing is read back and the write returns OK.
 //      Scope     Done once in write_register(), so write_u8(), write_u16(),
-//                write_raw(), every typed helper and every generic operation
-//                that writes are verified alike. Exactly one extra read frame
+//                the RegisterAccess calls, every typed helper and every generic operation
+//                that writes are checked alike. Exactly one extra read frame
 //                per write that has at least one compared byte; none for a
 //                span with only volatile or unlisted bytes. With the setting
 //                off, no extra frame is sent.
@@ -48,7 +48,7 @@
 //                read-back returns that read's own error (the write took
 //                effect). A difference in a compared bit returns VERIFY_FAILED
 //                (the write took effect; the servo holds a different value).
-//      Registers Each writable register is classified in verify_rule():
+//      Registers Each writable register is classified in readback_rule():
 //                  STABLE         compared in full;
 //                  STABLE_MASKED  compared only in the bits of its mask, the
 //                                 other bits having self-clearing, write-only
@@ -73,7 +73,7 @@
 //                0x0E 1 OVERVOLT_THRESH     STABLE
 //                0x0F 1 UNDERVOLT_THRESH    STABLE
 //                0x10 2 CONTROL_TORQUE_NV   STABLE
-//                0x12 1 PHASE               STABLE_MASKED, PHASE_VERIFY_MASK
+//                0x12 1 PHASE               STABLE_MASKED, PHASE_READBACK_MASK
 //                0x13 1 UNLOAD_ALARM_MASK   STABLE
 //                0x14 1 LED_ALARM_MASK      STABLE
 //                0x15 1 POS_COEF_P          STABLE
@@ -105,14 +105,14 @@
 //                0x37 1 EEPROM_LOCK         STABLE
 //
 //    Typed helpers (set_*/get_*):
-//      Target    The servo whose ID is device_id(). A broadcast or invalid ID
+//      Target    The servo whose ID is get_device_id(). A broadcast or invalid ID
 //                makes every helper that uses the bus return PARAM.
 //      Ranges    Only hardware ranges are enforced. An out-of-range argument
 //                returns OUT_OF_RANGE and sends nothing.
 //      Units     Native register units, stated per helper.
 //      Writes    Every setter performs exactly one register write (plus the
 //                verification read when enabled) and returns its Result. No setter reads before it writes
-//                or touches REG_EEPROM_LOCK; with write verification enabled,
+//                or touches REG_EEPROM_LOCK; with the readback check enabled,
 //                the write is followed by a single read-back and compare. The one exception is
 //                set_multiturn_feedback(), which reads REG_PHASE first because
 //                only one bit of that byte may change.
@@ -123,7 +123,7 @@
 //                hardware). The caller sequences unlock_eeprom(), the writes,
 //                then lock_eeprom(); nothing relocks automatically. A failed
 //                write leaves the lock as it was.
-//      Raw       The raw register calls above stay independent of these
+//      Registers The register calls above stay independent of these
 //                helpers; no register value is cached between calls.
 //------------------------------------------------------------------------
 
@@ -134,15 +134,17 @@
 #include <cstdint>
 #include <memory>
 
+#include "servokit/core/register_access.h"
 #include "servokit/core/servo.h"
 #include "servokit/core/servo_types.h"
+#include "servokit/serial/serial_link.h"
 #include "servokit/serial/servo_controller.h"
-#include "servokit/stseries/stseries_defines.h"
-#include "servokit/stseries/sts_units.h"
+#include "servokit/families/stseries/stseries_defines.h"
+#include "servokit/families/stseries/sts_units.h"
 
 namespace servokit {
 
-class STSServo : public Servo {
+class STSServo : public Servo, public RegisterAccess, public SerialLink {
  public:
   // Hardware limits of the typed helpers.
   static constexpr int32_t MAX_TARGET_POSITION = 30719;   ///< Target position magnitude, steps.
@@ -155,31 +157,36 @@ class STSServo : public Servo {
   static constexpr uint16_t MAX_CURRENT_LIMIT = 511;      ///< Over-current threshold, units of 6.5 mA.
   static constexpr uint8_t MAX_PROTECTION_TIME = 254;     ///< Protection durations, units of 10 ms.
   static constexpr uint8_t MAX_OVERLOAD_LIMIT = 100;      ///< Overload threshold, percent of maximum torque.
+  /** Stall torque of the ST3215 in mN*m: 19.5 kgf*cm at a supply of 7.4 V with
+   *  the rotor locked (manufacturer datasheet). It is lower at lower supply
+   *  voltages (16.5 kgf*cm at 6 V). Informational only: torque commands use
+   *  permille. */
+  static constexpr uint32_t STALL_TORQUE_MNM = 1912;
   static constexpr uint8_t ALARM_MASK_BITS = 0x3F;        ///< Defined sts_err_code_t bits (0..5).
   static constexpr uint8_t PHASE_MULTITURN_BIT = 1 << 4;  ///< REG_PHASE bit enabling multi-turn feedback.
-  /** REG_PHASE bits compared by write verification: every bit except bit 3
+  /** REG_PHASE bits compared by the readback check: every bit except bit 3
    *  (direction) and bit 6 (speed mode). The register map does not document
    *  the bit meanings; the excluded bits are those community documentation
    *  assigns to behaviour the servo may rewrite, unverified on hardware. */
-  static constexpr uint8_t PHASE_VERIFY_MASK = 0xFF & ~((1 << 3) | (1 << 6));
+  static constexpr uint8_t PHASE_READBACK_MASK = 0xFF & ~((1 << 3) | (1 << 6));
 
-  /** How write verification treats a register byte. */
-  enum class VerifyClass : uint8_t {
+  /** How the readback check treats a register byte. */
+  enum class ReadbackClass : uint8_t {
     STABLE,         ///< Compared in full.
-    STABLE_MASKED,  ///< Compared in the bits of VerifyRule::mask only.
+    STABLE_MASKED,  ///< Compared in the bits of ReadbackRule::mask only.
     VOLATILE        ///< Never compared (also: absent from the table).
   };
   /** Compare rule of one register byte. */
-  struct VerifyRule {
-    VerifyClass kind;  ///< Classification.
+  struct ReadbackRule {
+    ReadbackClass kind;  ///< Classification.
     uint8_t mask;      ///< Bits compared: 0xFF STABLE, a subset STABLE_MASKED, 0 VOLATILE.
   };
-  /** Write verification rule of the register byte at @p addr, from the table in
+  /** Readback rule of the register byte at @p addr, from the table in
    *  the file header. Pure; touches no bus. A byte absent from the table (any
    *  read-only register, a gap, an address of 256 or more) is VOLATILE with
    *  mask 0, so it is never compared. Every byte of a multi-byte register has
    *  the register's classification. */
-  static VerifyRule verify_rule(uint16_t addr);
+  static ReadbackRule readback_rule(uint16_t addr);
 
   /** Highest register address plus one: the control table is addressed by one byte. */
   static constexpr size_t REGISTER_SPACE = 256;
@@ -189,8 +196,7 @@ class STSServo : public Servo {
   /** Borrows a controller.
    *  @param controller Transaction engine; must outlive this object. Null makes
    *                    every bus call return PARAM.
-   *  @param id Device ID used by the Servo overrides (ping(), read_raw(),
-   *            write_raw()). */
+   *  @param id Device ID used by the Servo and RegisterAccess overrides. */
   explicit STSServo(ServoController* controller, uint8_t id = 1);
 
   /** Takes ownership of a controller (destroyed with this object).
@@ -198,19 +204,19 @@ class STSServo : public Servo {
   explicit STSServo(std::unique_ptr<ServoController> controller, uint8_t id = 1);
 
   /** Device ID used by the Servo overrides. Does not touch the bus. */
-  uint8_t device_id() const { return m_id; }
+  uint8_t get_device_id() const { return m_id; }
   void set_device_id(uint8_t id) { m_id = id; }
 
   /** Status byte of the most recent valid response (a bitmask of
    *  sts_err_code_t, 0 when healthy). Reset to 0 at the start of every call;
    *  it stays 0 when no valid response arrived. */
-  uint8_t last_status() const { return m_last_status; }
+  uint8_t get_last_status() const { return m_last_status; }
 
   /** Checks that the servo with @p id answers.
    *  @param id Unicast device ID, 0..0xFD (0xFE broadcast is rejected: it would
    *            make every servo on the bus answer at once).
    *  @return OK, or an error as described in the file header. */
-  Result ping(uint8_t id);
+  Result probe(uint8_t id);
 
   /** Reads @p len bytes from register @p addr of servo @p id.
    *  @param addr First register address; addr + len must not exceed REGISTER_SPACE.
@@ -220,9 +226,9 @@ class STSServo : public Servo {
 
   /** Writes @p len bytes to register @p addr of servo @p id. Same limits as
    *  read_register(). Registers are written as given, without EEPROM-lock
-   *  handling. With verify_writes() on, a successful write is followed by one
-   *  read of the span, compared per verify_rule(); returns VERIFY_FAILED on a
-   *  difference or the read's own error. See "Write verification" in the file
+   *  handling. With get_readback_check() on, a successful write is followed by one
+   *  read of the span, compared per readback_rule(); returns VERIFY_FAILED on a
+   *  difference or the read's own error. See "Readback check" in the file
    *  header. */
   Result write_register(uint8_t id, uint16_t addr, const uint8_t* data, size_t len);
 
@@ -322,19 +328,40 @@ class STSServo : public Servo {
   Result set_unload_alarm_mask(uint8_t mask);
 
   // --- Servo overrides ---
-  using Servo::ping;
-  Result ping() override;
-  Result read_raw(uint16_t addr, uint8_t* data, size_t len) override;
-  Result write_raw(uint16_t addr, const uint8_t* data, size_t len) override;
+  using Servo::probe;
+  /** probe(get_device_id()). */
+  Result probe() override;
   /** true calls unlock_eeprom(), false calls lock_eeprom(). Keeps no state. */
   Result set_persist(bool persist) override;
-  Result set_verify_checksum(bool enable) override;
-  bool verify_checksum() const override;
-  uint32_t checksum_errors() const override;
-  /** Turns write verification on or off; see "Write verification" in the file
+  /** @return this, as a RegisterAccess for the stored device ID. */
+  RegisterAccess* get_registers() override { return this; }
+  /** @return this, as a SerialLink over the controller. */
+  SerialLink* get_serial_link() override { return this; }
+
+  // --- RegisterAccess (the stored device ID) ---
+  // Same as the explicit-ID calls above with id = get_device_id(). The explicit-ID
+  // overloads stay available on STSServo.
+  using RegisterAccess::read_register;
+  using RegisterAccess::read_u16;
+  using RegisterAccess::read_u8;
+  using RegisterAccess::write_register;
+  using RegisterAccess::write_u16;
+  using RegisterAccess::write_u8;
+  Result read_register(uint16_t addr, uint8_t* data, size_t len) override;
+  Result write_register(uint16_t addr, const uint8_t* data, size_t len) override;
+  Result read_u8(uint16_t addr, uint8_t* out) override;
+  Result read_u16(uint16_t addr, uint16_t* out) override;
+  Result write_u8(uint16_t addr, uint8_t value) override;
+  Result write_u16(uint16_t addr, uint16_t value) override;
+  /** Turns the readback check on or off; see "Readback check" in the file
    *  header. Touches no bus. Always OK. */
-  Result set_verify_writes(bool enable) override;
-  bool verify_writes() const override { return m_verify_writes; }
+  Result set_readback_check(bool enable) override;
+  bool get_readback_check() const override { return m_readback_check; }
+
+  // --- SerialLink (the controller's settings) ---
+  Result set_verify_checksum(bool enable) override;
+  bool get_verify_checksum() const override;
+  uint32_t get_checksum_errors() const override;
 
   // --- Generic Servo implementation (see sts_servo_generic.cpp) ---
   // Built on the register helpers above. Angles use 4096 steps per revolution
@@ -345,12 +372,12 @@ class STSServo : public Servo {
 
   /** Absolute move: converts @p angle_mdeg to steps (rounded to nearest) and
    *  writes REG_CTRL_POS once.
-   *  @return OK, OUT_OF_RANGE outside capabilities().limits angle domain
+   *  @return OK, OUT_OF_RANGE outside get_capabilities().limits angle domain
    *          (nothing sent), or the write's error. */
   Result move_to(int32_t angle_mdeg) override;
 
   /** Fixed description of the STS family; does not touch the bus and does not
-   *  depend on read_identity(). Features are those the generic operations
+   *  depend on identify(). Features are those the generic operations
    *  below perform. The current range is the reportable range: the largest
    *  magnitude of the 15-bit current feedback, so a telemetry sample never lies
    *  outside it. The range a stall-current threshold may be set to is narrower
@@ -358,11 +385,11 @@ class STSServo : public Servo {
    *  MULTI_TURN_POS and RETAINS_POSITION_UNPOWERED. The domain is the
    *  -MAX_TARGET_POSITION..MAX_TARGET_POSITION steps; resolution_mdeg is the step size
    *  87.890625 mdeg rounded to 88. */
-  Capabilities capabilities() const override;
+  Capabilities get_capabilities() const override;
 
   /** Reads the model, firmware version and device ID registers in one
    *  transaction. The device ID is the value stored in the servo. */
-  Result read_identity(Identity* out) override;
+  Result identify(Identity* out) override;
 
   /** Writes REG_RESPONSE_MODE = RSP_ALL, then REG_OPERATION_MODE = OP_SERVO
    *  (position mode). That position mode is the right one for the
@@ -387,14 +414,14 @@ class STSServo : public Servo {
 
   /** Writes REG_CTRL_TORQUE, REG_START_TORQUE, REG_CTRL_ACCEL, REG_CTRL_SPEED
    *  (in that order, one plain write each, no reads). Speed, acceleration and
-   *  torques are clamped to capabilities().limits and converted to native
+   *  torques are clamped to get_capabilities().limits and converted to native
    *  units. REG_START_TORQUE is an EEPROM-region register, so it follows the
    *  lock state. Stops at the first failure. */
   Result set_profile(const Profile& profile) override;
 
   /** Reads REG_POSITION, then writes it as the target (REG_CTRL_POS), so the
    *  servo stops where it is. Torque must already be enabled. Two transactions.
-   *  Returns the failing sub-operation's error; hold_failed_step() says which.
+   *  Returns the failing sub-operation's error; get_hold_failed_step() says which.
    *  A position read outside -MAX_TARGET_POSITION..MAX_TARGET_POSITION returns
    *  OUT_OF_RANGE with POSITION_OUT_OF_DOMAIN and nothing is written.
    *  A servo that reports an alarm in its status byte still yields its
@@ -403,7 +430,7 @@ class STSServo : public Servo {
 
   /** Sub-operation that failed in the most recent hold(). */
   enum class HoldStep : uint8_t { NONE, READ_POSITION, POSITION_OUT_OF_DOMAIN, WRITE_TARGET };
-  HoldStep hold_failed_step() const { return m_hold_step; }
+  HoldStep get_hold_failed_step() const { return m_hold_step; }
 
   /** Writes REG_SERVO_EN (true = torque on). */
   Result set_torque(bool enable) override;
@@ -431,7 +458,7 @@ class STSServo : public Servo {
   ServoController* m_ctl;
   uint8_t m_id;
   uint8_t m_last_status = 0;
-  bool m_verify_writes = false;
+  bool m_readback_check = false;
   HoldStep m_hold_step = HoldStep::NONE;
 };
 

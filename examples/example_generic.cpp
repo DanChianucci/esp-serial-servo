@@ -15,7 +15,7 @@ using std::chrono::milliseconds;
 static Result drive(Servo& servo) {
   // Features are reported by the servo itself and are never emulated: ask
   // before relying on an operation.
-  const Capabilities caps = servo.capabilities();
+  const Capabilities caps = servo.get_capabilities();
   if (!caps.features.has(Feature::ABSOLUTE_POSITION) || !caps.features.has(Feature::READ_POSITION)) {
     return Result::UNSUPPORTED;
   }
