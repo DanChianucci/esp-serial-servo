@@ -6,9 +6,21 @@
 #include <soc/uart_periph.h>
 
 #include "servokit/serial/servo_internal.h"
+#include "servokit/serial/sync_matcher.h"
 
 namespace servokit {
 using namespace timeout;
+
+namespace {
+/** Converts the time left on a deadline to a tick count for the UART driver:
+ *  ceil(ms * configTICK_RATE_HZ / 1000), so the wait never ends early (it can
+ *  overrun by less than one tick). The result stays below portMAX_DELAY, which
+ *  would mean "wait forever"; callers re-check the deadline after each wait,
+ *  so the saturated value is safe. */
+TickType_t remaining_ticks(const Deadline& deadline) {
+  return ceil_ticks(ceil_ms(deadline.remaining()), configTICK_RATE_HZ, portMAX_DELAY - 1);
+}
+}  // namespace
 
 int def_rx_buffer_size(int uart_num, int rx_buffer_size) {
   if (rx_buffer_size <= 0)
@@ -122,53 +134,49 @@ srv_stat_t ESPSerialPort::discard_input() {
 }
 
 srv_stat_t ESPSerialPort::flush_output(timeout_duration_t timeout) {
-  int ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count();
-  int result = uart_wait_tx_done(m_uart_num, pdMS_TO_TICKS(ms));
-
-  SRV_RETURN_IF(result == ESP_ERR_TIMEOUT, SRV_TIMEOUT);
-  SRV_RETURN_IF(result != ESP_OK, SRV_FAIL);
-  return SRV_OK;
+  const Deadline deadline(timeout);
+  do {
+    esp_err_t result = uart_wait_tx_done(m_uart_num, remaining_ticks(deadline));
+    if (result == ESP_OK) return SRV_OK;
+    SRV_RETURN_IF(result != ESP_ERR_TIMEOUT, SRV_FAIL);
+  } while (!deadline.expired());
+  return SRV_TIMEOUT;
 }
 
 srv_stat_t ESPSerialPort::read_sync(const buffer_const_t pattern, timeout_duration_t timeout) {
-  size_t match_index = 0;
-  int bytes_read = 0;
-  timeout_duration_t remaining = timeout;
+  SyncMatcher matcher;
+  SRV_RETURN_IF(!matcher.reset(pattern), SRV_PARAM_ERR);
+  if (matcher.complete()) return SRV_OK;
 
-  timeout_ctrl_t timeout_ctrl;
-  init_timeout_ctrl(&timeout_ctrl);
-
+  const Deadline deadline(timeout);
   uint8_t byte[1];
-  while (match_index < pattern.size()) {
-    srv_result_t result = read_bytes(buffer_t(byte), remaining);  // TODO do I need to check for error
+  do {
+    srv_result_t result = read_bytes(buffer_t(byte), deadline.remaining());
     SRV_RETURN_ON_ERR(result);
-    int len = get_value(result);
-    bytes_read += len;
-    if (len > 0) {
-      if (*byte == pattern[match_index])
-        match_index++;
-      else
-        match_index = 0;
-    }
-    bool timed_out = update_timeout(&timeout_ctrl, &remaining);
-    SRV_RETURN_IF(timed_out, SRV_TIMEOUT);
-  }
-  return SRV_OK;
+    if (get_value(result) > 0 && matcher.feed(*byte)) return SRV_OK;
+  } while (!deadline.expired());
+  return SRV_TIMEOUT;
 }
 
 srv_result_t ESPSerialPort::read_bytes(const buffer_t data, timeout_duration_t timeout) {
-  uint32_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count();
-  int result = uart_read_bytes(m_uart_num, data.data(), data.size(), pdMS_TO_TICKS(ms));
-  SRV_RETURN_IF(result == ESP_FAIL, SRV_READ_FAIL);
-  return result;
+  SRV_RETURN_IF(data.empty(), 0);
+  const Deadline deadline(timeout);
+  size_t total = 0;
+  do {
+    int result = uart_read_bytes(m_uart_num, data.data() + total, data.size() - total, remaining_ticks(deadline));
+    SRV_RETURN_IF(result < 0, SRV_READ_FAIL);
+    total += static_cast<size_t>(result);
+  } while (total < data.size() && !deadline.expired());
+  return static_cast<int>(total);
 }
 
 srv_result_t ESPSerialPort::write_bytes(const buffer_const_t data, timeout_duration_t timeout) {
+  const Deadline deadline(timeout);
   int result = uart_write_bytes(m_uart_num, data.data(), data.size());
-  SRV_RETURN_IF(result == ESP_FAIL, SRV_WRITE_FAIL);
+  SRV_RETURN_IF(result < 0, SRV_WRITE_FAIL);
 
   if (timeout > timeout_duration_t::zero()) {
-    SRV_RETURN_ON_ERR(flush_output(timeout));
+    SRV_RETURN_ON_ERR(flush_output(deadline.remaining()));
   }
   return result;
 }

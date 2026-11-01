@@ -21,7 +21,7 @@ layer, which it adds on ESP-IDF builds.
 | Layer | Headers | Role |
 |---|---|---|
 | core | `core/servo.h`, `core/register_access.h`, `core/servo_types.h`, `core/servo_utils.h` | Generic `Servo` interface, the `RegisterAccess` interface, value types (`Result`, `Capabilities`, `Telemetry`, `AlarmSet`, ...), status codes. No I/O. |
-| serial | `serial/serial_port.h`, `serial/serial_link.h`, `serial/servo_controller.h`, `serial/servo_packet.h` | `SerialPort` transport interface, `SerialLink` (checksum settings), `ServoController` (one command/response transaction with bounded time), packet base class. |
+| serial | `serial/serial_port.h`, `serial/serial_link.h`, `serial/servo_controller.h`, `serial/servo_packet.h`, `serial/deadline.h` | `SerialPort` transport interface, `SerialLink` (checksum settings), `ServoController` (one command/response transaction with bounded time), packet base class, `Deadline` (monotonic deadline used by the ESP-IDF port). |
 | families/stseries | `families/stseries/sts_servo.h`, `families/stseries/sts_units.h`, `families/stseries/stseries_packet.h`, `families/stseries/stseries_defines.h` | STS protocol framing, register map, unit conversions and the `STSServo` driver. |
 | pwm | `pwm/` | Reserved for PWM-driven servos. Contains no code yet. |
 | platform | `platform/esp_idf.h` | `ESPSerialPort`, a `SerialPort` on an ESP-IDF UART. |
@@ -109,3 +109,6 @@ They are built and run with the host tests (`tests/host/CMakeLists.txt`).
 - **Not thread-safe.** Serialize all calls per bus.
 - **Hardware status.** Items the code marks as not verified on hardware are
   collected in the [hardware-verification list](api.md#hardware-verification-list).
+  This includes `ESPSerialPort`: `lib/platform/esp_idf.cpp` is not built or run
+  by the host tests, and its timeout behaviour is not verified on ESP-IDF
+  hardware.

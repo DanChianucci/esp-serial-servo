@@ -687,18 +687,44 @@ under `ESP_PLATFORM` or `SERVOKIT_IMPL_ESP`).
   the driver is already installed.
 - `close()`: removes the driver and resets the pins (also run by the
   destructor). `SRV_OK`, or `SRV_PARAM_ERR`.
-- The `SerialPort` methods as above. `write_bytes` copies into the driver and
-  waits for transmission only if `timeout` is positive.
+- The `SerialPort` methods as above. `write_bytes` hands the bytes to the
+  driver and waits for transmission only if `timeout` is positive.
 - Getters: `get_uart_num()`, `get_tx_pin()`, `get_rx_pin()`, `get_baud_rate()`,
   `get_rx_buffer_size()`, `get_tx_buffer_size()`, `get_intr_alloc_flags()`,
   `get_tx_od()`, `get_tx_pu()`, `get_rx_pu()`. No bus access.
 
-Known limitation: `ESPSerialPort::read_sync()` re-arms the full timeout on
-every read and only counts time down when the build defines
-`DISABLE_SRV_TIMEOUTS`. In a default build, a bus that stays silent does not
-make `read_sync()` return `SRV_TIMEOUT`, so a transaction on an unresponsive
-servo is not bounded by the transaction budget on ESP-IDF. The host `SerialPort`
-fake does not show this.
+Timeouts: every blocking `ESPSerialPort` method takes a deadline from a
+monotonic clock when it is called (`serial/deadline.h`) and stops waiting when
+it passes. The deadline does not depend on how many reads it takes, so
+`read_sync()` returns `SRV_TIMEOUT` on a silent bus after `timeout` in total.
+A zero or negative `timeout` still makes one non-blocking attempt. A `timeout`
+too large to represent never expires.
+
+- `read_sync`, `read_bytes`: wait on the UART driver for the time left.
+  `read_bytes` returns the bytes read so far (possibly fewer than requested,
+  or 0) when the deadline passes.
+- `write_bytes`: `uart_write_bytes()` has no timeout, so handing the bytes to
+  the driver is not bounded by the deadline (with a TX buffer size of 0 it
+  returns once the bytes are in the UART FIFO, which can take the duration of
+  the frame). The deadline, which starts when the call begins, bounds only the
+  wait for transmission to finish, and that wait happens only for a positive
+  `timeout`. On `SRV_TIMEOUT` the bytes stay queued and are still sent.
+- `read_sync`: finds the pattern with a streaming matcher
+  (`serial/sync_matcher.h`), so a pattern that starts inside a partial match
+  (for example `FF FF` in `FF FF FF`, or `AA AB` in `AA AA AB`) is found.
+  Patterns are at most `SyncMatcher::MAX_PATTERN` (16) bytes; a longer pattern
+  returns `SRV_PARAM_ERR`. An empty pattern returns `SRV_OK` at once.
+- `flush_output`: `SRV_TIMEOUT` when transmission is not done by the deadline.
+- Tick conversion: the driver takes waits in RTOS ticks. The time left is
+  rounded up to whole milliseconds, then converted to
+  `ceil(ms * configTICK_RATE_HZ / 1000)` ticks in 64-bit arithmetic (exact for
+  any tick rate), capped below `portMAX_DELAY`, so a wait never ends before the
+  deadline and can overrun it by less than one tick.
+
+Verification status: `lib/platform/esp_idf.cpp` is not built or run by the host
+tests, and its timeout behaviour is not verified on ESP-IDF hardware. The host
+tests cover the platform-independent parts (`Deadline`, tick arithmetic,
+`SyncMatcher`). See the [hardware-verification list](#hardware-verification-list).
 
 ## Hardware-verification list
 
@@ -719,3 +745,8 @@ register map or vendor documentation.
    bit 15 sign).
 6. `MULTI_TURN_POS` and `RETAINS_POSITION_UNPOWERED` are not declared because
    they are unverified.
+7. `ESPSerialPort` timeouts: `lib/platform/esp_idf.cpp` is not built or run by
+   the host tests. That every blocking method returns by its deadline, the
+   tick conversion against the configured tick rate, and the
+   `uart_write_bytes()` hand-off time have not been verified on ESP-IDF
+   hardware.
