@@ -254,8 +254,8 @@ struct Limits {
   uint32_t max_speed_mdeg_s = 0;     ///< Maximum speed (SET_SPEED)
   uint32_t max_accel_mdeg_s2 = 0;    ///< Maximum acceleration (SET_ACCEL)
   uint16_t max_torque_permille = 0;  ///< Maximum torque limit (TORQUE_LIMIT), 1000 = full
-  int32_t current_min_ma = 0;        ///< Lowest reportable/settable current (READ_CURRENT)
-  int32_t current_max_ma = 0;        ///< Highest reportable/settable current
+  int32_t current_min_ma = 0;        ///< Lowest reportable current (READ_CURRENT); a settable threshold may span less
+  int32_t current_max_ma = 0;        ///< Highest reportable current
   AlarmSet reportable_alarms;        ///< Alarms this servo can actually report
 };
 

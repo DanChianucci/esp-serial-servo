@@ -6,8 +6,8 @@
 //  - an operation whose feature is absent returns UNSUPPORTED and sends nothing;
 //  - an operation whose feature is present succeeds when the bus answers;
 //  - move_to outside the declared domain returns OUT_OF_RANGE and sends nothing;
-//  - read_telemetry, read_alarms and hold fail when any one of their
-//    transactions fails, and read_telemetry leaves its output untouched;
+//  - read_telemetry, read_alarms, hold, set_protection and set_profile fail
+//    when any one of their transactions fails (writes stop at the first failure), and read_telemetry leaves its output untouched;
 //  - null output pointers return PARAM;
 //  - set_persist agrees with Feature::PERSIST_CONFIG;
 //  - limits are populated for the features that use them.
@@ -212,6 +212,12 @@ inline int run_servo_conformance(servokit::Servo& s, const ConformanceHooks& h, 
   }
   if (f.has(Feature::HOLD)) {
     fails_at_every_transaction(ConformanceOp::HOLD, [&] { return s.hold(); }, [] {});
+  }
+  if (has_protection) {
+    fails_at_every_transaction(ConformanceOp::SET_PROTECTION, [&] { return s.set_protection(protection); }, [] {});
+  }
+  if (has_profile) {
+    fails_at_every_transaction(ConformanceOp::SET_PROFILE, [&] { return s.set_profile(profile); }, [] {});
   }
   if (f.has(Feature::READ_ALARMS)) {
     fails_at_every_transaction(ConformanceOp::READ_ALARMS, [&] { return s.read_alarms(&alarms); }, [] {});

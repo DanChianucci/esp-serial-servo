@@ -246,9 +246,12 @@ class STSServo : public Servo {
 
   /** Fixed description of the STS family; does not touch the bus and does not
    *  depend on read_identity(). Features are those the generic operations
-   *  below perform. Not asserted because they are unverified on hardware:
+   *  below perform. The current range is the reportable range: the largest
+   *  magnitude of the 15-bit current feedback, so a telemetry sample never lies
+   *  outside it. The range a stall-current threshold may be set to is narrower
+   *  (MAX_CURRENT_LIMIT units); set_protection() rejects larger values. Not asserted because they are unverified on hardware:
    *  MULTI_TURN_POS and RETAINS_POSITION_UNPOWERED. The domain is the
-   *  approved +-MAX_TARGET_POSITION steps; resolution_mdeg is the step size
+   *  -MAX_TARGET_POSITION..MAX_TARGET_POSITION steps; resolution_mdeg is the step size
    *  87.890625 mdeg rounded to 88. */
   Capabilities capabilities() const override;
 
@@ -257,8 +260,8 @@ class STSServo : public Servo {
   Result read_identity(Identity* out) override;
 
   /** Writes REG_RESPONSE_MODE = RSP_ALL, then REG_OPERATION_MODE = OP_SERVO
-   *  (position mode). The mode choice is provisional until verified on
-   *  hardware. Two plain writes, no reads. If the servo was in RSP_READ_PING
+   *  (position mode). That position mode is the right one for the
+   *  generic operations is not verified on hardware. Two plain writes, no reads. If the servo was in RSP_READ_PING
    *  its reply to the first write is missing: that write takes effect but
    *  TIMEOUT is returned and the second write is not sent; call again. */
   Result prepare() override;
@@ -271,7 +274,9 @@ class STSServo : public Servo {
    *  returns OUT_OF_RANGE and sends nothing. Values are never clamped because
    *  that would silently weaken a threshold. Zero is written as given.
    *  Overload and voltage thresholds are not part of Protection and are not
-   *  written. Four plain writes, no reads; stops at the first failure. The
+   *  written. OVER_VOLTAGE and UNDER_VOLTAGE share one native bit (the servo
+   *  does not distinguish them), so requesting either releases torque on both.
+   *  Four plain writes, no reads; stops at the first failure. The
    *  units and the meaning of the thresholds are unverified on hardware. */
   Result set_protection(const Protection& protection) override;
 
@@ -285,12 +290,14 @@ class STSServo : public Servo {
   /** Reads REG_POSITION, then writes it as the target (REG_CTRL_POS), so the
    *  servo stops where it is. Torque must already be enabled. Two transactions.
    *  Returns the failing sub-operation's error; hold_failed_step() says which.
+   *  A position read outside -MAX_TARGET_POSITION..MAX_TARGET_POSITION returns
+   *  OUT_OF_RANGE with POSITION_OUT_OF_DOMAIN and nothing is written.
    *  A servo that reports an alarm in its status byte still yields its
    *  position. Never reports OK for a write that was not acknowledged. */
   Result hold() override;
 
   /** Sub-operation that failed in the most recent hold(). */
-  enum class HoldStep : uint8_t { NONE, READ_POSITION, WRITE_TARGET };
+  enum class HoldStep : uint8_t { NONE, READ_POSITION, POSITION_OUT_OF_DOMAIN, WRITE_TARGET };
   HoldStep hold_failed_step() const { return m_hold_step; }
 
   /** Writes REG_SERVO_EN (true = torque on). */

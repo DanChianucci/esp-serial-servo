@@ -20,8 +20,8 @@
 //    zero. Conversions never saturate; the caller clamps to the register
 //    range it needs.
 //
-//    Feedback encodings (read from the ST3215 register map and the vendor
-//    reference code; not yet confirmed on every hardware revision):
+//    Feedback encodings (taken from the ST3215 register map and the vendor
+//    sample code; not verified on hardware):
 //      position  bit 15 sign, bits 0..14 magnitude
 //      load      bit 10 sign, bits 0..9 magnitude (0..1000)
 //      current   bit 15 sign, bits 0..14 magnitude
@@ -44,6 +44,7 @@ constexpr int64_t MDEG_PER_REV = 360000;
 constexpr int64_t CURRENT_UNIT_X2_MA = 13;  ///< 6.5 mA expressed in half milliamps.
 constexpr int64_t VOLTAGE_UNIT_MV = 100;
 constexpr int64_t TIME_UNIT_MS = 10;
+constexpr int32_t CURRENT_FEEDBACK_MAX_UNITS = 0x7FFF;  ///< Largest current feedback magnitude (15 bits), 6.5 mA units.
 
 /** Signed division rounding to nearest, halves away from zero. @p den > 0. */
 constexpr int64_t round_div(int64_t num, int64_t den) {

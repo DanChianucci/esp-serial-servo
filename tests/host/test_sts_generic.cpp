@@ -169,7 +169,9 @@ static void test_capabilities() {
   CHECK(c.limits.angle_min_mdeg == -2699912 && c.limits.angle_max_mdeg == 2699912);
   CHECK(c.limits.resolution_mdeg == 88 && c.limits.max_speed_mdeg_s == 298828);
   CHECK(c.limits.max_accel_mdeg_s2 == 2232422 && c.limits.max_torque_permille == 1000);
-  CHECK(c.limits.current_min_ma == -3250 && c.limits.current_max_ma == 3250);
+  CHECK(c.limits.current_min_ma == -212986 && c.limits.current_max_ma == 212986);
+  CHECK(c.limits.current_max_ma == u::current_units_to_ma(u::decode_current_units(0x7FFF)));
+  CHECK(c.limits.current_min_ma == u::current_units_to_ma(u::decode_current_units(0xFFFF)));
   CHECK(c.limits.reportable_alarms == u::reportable_alarms());
   CHECK(r.sent() == 0);
   // Operations without a feature stay unsupported.
@@ -416,7 +418,7 @@ static void test_hold() {
     Rig r;  // magnitude beyond the target range: nothing written
     r.value({0xFF, 0x7F});
     CHECK(r.servo.hold() == Result::OUT_OF_RANGE);
-    CHECK(r.sent() == 1 && r.servo.hold_failed_step() == STSServo::HoldStep::WRITE_TARGET);
+    CHECK(r.sent() == 1 && r.servo.hold_failed_step() == STSServo::HoldStep::POSITION_OUT_OF_DOMAIN);
     r.value({0x00, 0x08});
     r.ack();
     CHECK(r.servo.hold() == Result::OK && r.servo.hold_failed_step() == STSServo::HoldStep::NONE);
@@ -659,20 +661,26 @@ static void test_conformance() {
   {  // The suite detects a servo whose declared features do not match its operations.
     class Liar : public Servo {
      public:
-      Result move_to(int32_t) override { return Result::OK; }  // accepts everything
+      explicit Liar(bool claims_hold) : m_claims_hold(claims_hold) {}
+      Result move_to(int32_t a) override { return (a < -100 || a > 100) ? Result::OUT_OF_RANGE : Result::OK; }
       Capabilities capabilities() const override {
         Capabilities c;
-        c.features = Feature::ABSOLUTE_POSITION | Feature::HOLD;
+        c.features = m_claims_hold ? (Feature::ABSOLUTE_POSITION | Feature::HOLD) : FeatureSet(Feature::ABSOLUTE_POSITION);
         c.limits.angle_max_mdeg = 100;
         c.limits.angle_min_mdeg = -100;
         c.limits.resolution_mdeg = 1;
         return c;
       }
-    } liar;
+     private:
+      bool m_claims_hold;
+    };
     ConformanceHooks h;
     h.reset = [] {};
     h.script = [](ConformanceOp, int) {};
     h.frames_sent = [] { return size_t{0}; };
+    Liar honest(false);  // same servo without the HOLD claim: conforms
+    Liar liar(true);     // only the HOLD claim is false
+    CHECK(run_servo_conformance(honest, h, true) == 0);
     CHECK(run_servo_conformance(liar, h, true) != 0);
   }
 }

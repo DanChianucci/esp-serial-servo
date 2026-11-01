@@ -39,8 +39,9 @@ Capabilities STSServo::capabilities() const {
   l.max_speed_mdeg_s = STS::units::steps_s_to_mdeg_s(MAX_SPEED);
   l.max_accel_mdeg_s2 = STS::units::accel_units_to_mdeg_s2(MAX_ACCELERATION);
   l.max_torque_permille = MAX_TORQUE;
-  l.current_min_ma = -STS::units::current_units_to_ma(500);
-  l.current_max_ma = STS::units::current_units_to_ma(500);
+  // Reportable range: the largest magnitude the current feedback register can encode.
+  l.current_min_ma = -STS::units::current_units_to_ma(STS::units::CURRENT_FEEDBACK_MAX_UNITS);
+  l.current_max_ma = STS::units::current_units_to_ma(STS::units::CURRENT_FEEDBACK_MAX_UNITS);
   l.reportable_alarms = STS::units::reportable_alarms();
   return c;
 }
@@ -117,7 +118,12 @@ Result STSServo::hold() {
     m_hold_step = HoldStep::READ_POSITION;
     return r;
   }
-  r = set_target_position(STS::units::decode_position_steps(word(b, 0)));
+  const int32_t steps = STS::units::decode_position_steps(word(b, 0));
+  if (steps < -MAX_TARGET_POSITION || steps > MAX_TARGET_POSITION) {
+    m_hold_step = HoldStep::POSITION_OUT_OF_DOMAIN;
+    return Result::OUT_OF_RANGE;
+  }
+  r = set_target_position(steps);
   if (r != Result::OK) m_hold_step = HoldStep::WRITE_TARGET;
   return r;
 }
