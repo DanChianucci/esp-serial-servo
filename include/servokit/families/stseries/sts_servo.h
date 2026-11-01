@@ -1,6 +1,6 @@
 //------------------------------------------------------------------------
 // Filename  :  sts_servo.h
-// Project   :  ESP Serial Servo
+// Project   :  servokit
 //
 // Description:
 //    STS-series servo: register-level access plus typed helpers in the
@@ -21,9 +21,10 @@
 //      Errors    Returned, never thrown: TIMEOUT (no complete response),
 //                BAD_RESPONSE (framing, checksum, wrong ID, wrong length, or
 //                the servo reported an error status; see get_last_status()),
-//                OUT_OF_RANGE (register span outside the control table),
-//                PARAM (null pointer, empty or oversized span, broadcast or
-//                invalid ID, no controller), BUS (transport failure).
+//                OUT_OF_RANGE (register span outside the control table or
+//                longer than MAX_SPAN), PARAM (null pointer, empty span,
+//                broadcast or invalid ID, no controller), BUS (transport
+//                failure).
 //      Lifetimes Pointer arguments are used only during the call and never
 //                retained. Output buffers are written on OK only.
 //      Replies   A servo whose REG_RESPONSE_MODE is RSP_READ_PING sends no
@@ -144,9 +145,17 @@
 
 namespace servokit {
 
+/** Driver for one STS-series servo on a ServoController. It implements the
+ *  generic Servo interface (tier 1), the family's typed helpers in native
+ *  units (tier 2), RegisterAccess (tier 3, for the stored device ID) and
+ *  SerialLink, and also offers explicit-ID register calls so one object can
+ *  address any servo on the bus. See the file header for the contract common
+ *  to every call. The object holds no register cache. */
 class STSServo : public Servo, public RegisterAccess, public SerialLink {
  public:
   // Hardware limits of the typed helpers.
+  // The memory table lists a target range of +-32766 steps; the library keeps
+  // to +-30719, which is also the generic angle domain.
   static constexpr int32_t MAX_TARGET_POSITION = 30719;   ///< Target position magnitude, steps.
   static constexpr int32_t MAX_SPEED = 3400;              ///< Speed magnitude, steps/s.
   static constexpr uint8_t MAX_ACCELERATION = 254;        ///< Acceleration, units of 100 steps/s^2.
@@ -162,7 +171,7 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
    *  voltages (16.5 kgf*cm at 6 V). Informational only: torque commands use
    *  permille. */
   static constexpr uint32_t STALL_TORQUE_MNM = 1912;
-  static constexpr uint8_t ALARM_MASK_BITS = 0x3F;        ///< Defined sts_err_code_t bits (0..5).
+  static constexpr uint8_t ALARM_MASK_BITS = 0x3F;        ///< Defined err_code_t bits (0..5).
   static constexpr uint8_t PHASE_MULTITURN_BIT = 1 << 4;  ///< REG_PHASE bit enabling multi-turn feedback.
   /** REG_PHASE bits compared by the readback check: every bit except bit 3
    *  (direction) and bit 6 (speed mode). The register map does not document
@@ -193,18 +202,24 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
   /** Longest register span (bytes) one read or write call accepts. */
   static constexpr size_t MAX_SPAN = 64;
 
-  /** Borrows a controller.
+  /** Borrows a controller. Sends nothing.
    *  @param controller Transaction engine; must outlive this object. Null makes
    *                    every bus call return PARAM.
    *  @param id Device ID used by the Servo and RegisterAccess overrides. */
   explicit STSServo(ServoController* controller, uint8_t id = 1);
 
-  /** Takes ownership of a controller (destroyed with this object).
-   *  The controller's SerialPort must outlive this object. */
+  /** Takes ownership of a controller (destroyed with this object). Sends
+   *  nothing.
+   *  @param controller Transaction engine; its SerialPort must outlive this
+   *                    object. A null pointer behaves like a null borrowed
+   *                    controller (every bus call returns PARAM).
+   *  @param id Device ID used by the Servo and RegisterAccess overrides. */
   explicit STSServo(std::unique_ptr<ServoController> controller, uint8_t id = 1);
 
   /** Device ID used by the Servo overrides. Does not touch the bus. */
   uint8_t get_device_id() const { return m_id; }
+  /** Changes only the ID this object addresses; sends nothing and does not
+   *  reprogram the servo (write REG_DEVICE_ID for that). */
   void set_device_id(uint8_t id) { m_id = id; }
 
   /** Status byte of the most recent valid response (a bitmask of
@@ -234,11 +249,13 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
 
   /** Reads one byte register. @param[out] out Written on OK only. */
   Result read_u8(uint8_t id, uint16_t addr, uint8_t* out);
-  /** Reads a 16-bit register (little endian, @p addr = low byte). */
+  /** Reads a 16-bit register (little endian, @p addr = low byte).
+   *  @param[out] out Written on OK only; null returns PARAM. */
   Result read_u16(uint8_t id, uint16_t addr, uint16_t* out);
-  /** Writes one byte register. */
+  /** Writes one byte register (see write_register()). */
   Result write_u8(uint8_t id, uint16_t addr, uint8_t value);
-  /** Writes a 16-bit register (little endian, @p addr = low byte). */
+  /** Writes a 16-bit register (little endian, @p addr = low byte); see
+   *  write_register(). */
   Result write_u16(uint8_t id, uint16_t addr, uint16_t value);
 
   // --- Typed helpers (see "Typed helpers" in the file header) ---
@@ -256,9 +273,9 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
   Result get_response_mode(STS::rsp_mode_t* mode);
   /** Sets REG_RESPONSE_MODE. With RSP_READ_PING the servo stops answering
    *  writes, so later write calls return TIMEOUT even though the write took
-   *  effect. The firmware adapter must call set_response_mode(STS::RSP_ALL) at
-   *  boot so that every later write is acknowledged; no generic Servo call
-   *  does it. From RSP_READ_PING the call itself returns TIMEOUT (its write
+   *  effect. An application using the generic Servo interface must call
+   *  set_response_mode(STS::RSP_ALL) once after power-up so that every later
+   *  write is acknowledged; no generic Servo call does it. From RSP_READ_PING the call itself returns TIMEOUT (its write
    *  took effect), so a second call confirms it. */
   Result set_response_mode(STS::rsp_mode_t mode);
   /** Reads REG_RESPONSE_DELAY. @param[out] delay_2us Units of 2 us. */
@@ -336,8 +353,9 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
   SerialLink* get_serial_link() override { return this; }
 
   // --- RegisterAccess (the stored device ID) ---
-  // Same as the explicit-ID calls above with id = get_device_id(). The explicit-ID
-  // overloads stay available on STSServo.
+  // Each call is the explicit-ID call above with id = get_device_id(); the
+  // contracts are those of RegisterAccess and of the explicit-ID calls. The
+  // using-declarations keep the explicit-ID overloads visible on STSServo.
   using RegisterAccess::read_register;
   using RegisterAccess::read_u16;
   using RegisterAccess::read_u8;
@@ -356,8 +374,14 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
   bool get_readback_check() const override { return m_readback_check; }
 
   // --- SerialLink (the controller's settings) ---
+  // Forward to the ServoController, so servos sharing a controller share the
+  // setting. No bus access.
+  /** Sets ServoController::set_verify_checksum(). @return OK, or PARAM when
+   *  there is no controller. */
   Result set_verify_checksum(bool enable) override;
+  /** @return The controller's setting; true when there is no controller. */
   bool get_verify_checksum() const override;
+  /** @return The controller's bad-checksum count; 0 when there is no controller. */
   uint32_t get_checksum_errors() const override;
 
   // --- Generic Servo implementation (see sts_servo_generic.cpp) ---
@@ -374,8 +398,8 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
   // or clamped. A setter with several writes stops at the first failure and
   // returns its Result; earlier writes of that call may have taken effect.
   //
-  // Boot: the firmware adapter must call set_response_mode(STS::RSP_ALL) once
-  // after power-up so that writes are acknowledged. No generic call does it.
+  // Power-up: the application must call set_response_mode(STS::RSP_ALL) once
+  // so that writes are acknowledged. No generic call does it.
 
   /** Absolute move: converts @p angle_mdeg to steps (rounded to nearest) and
    *  writes REG_CTRL_POS once.
@@ -484,7 +508,13 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
   Result cancel_motion() override;
 
   /** Step that failed in the most recent cancel_motion(). */
-  enum class CancelStep : uint8_t { NONE, DISABLE_TORQUE, READ_POSITION, POSITION_OUT_OF_DOMAIN, WRITE_TARGET };
+  enum class CancelStep : uint8_t {
+    NONE,                    ///< No failure (the last cancel_motion() succeeded, or none ran).
+    DISABLE_TORQUE,          ///< The torque-off write failed.
+    READ_POSITION,           ///< The position read failed.
+    POSITION_OUT_OF_DOMAIN,  ///< The position read was outside the target domain.
+    WRITE_TARGET             ///< The target write failed.
+  };
   /** @return NONE after a successful cancel_motion(), otherwise the failed
    *  step. Does not touch the bus. */
   CancelStep get_cancel_failed_step() const { return m_cancel_step; }
@@ -509,17 +539,24 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
   Result read_alarms(AlarmSet* out) override;
 
  private:
+  // Reads one byte of a register that must hold 0 or 1; BAD_RESPONSE otherwise.
   Result read_bool(uint16_t addr, bool* out);
+  // Like read_register() for the stored ID, but a reply carrying an alarm in
+  // its status byte is still accepted (the alarm stays in m_last_status).
   Result read_with_status(uint16_t addr, uint8_t* data, size_t len);
+  // One command/response exchange: builds the command frame, sends it, checks
+  // the reply's ID, status and length, and copies out_len data bytes to out.
+  // Every public bus call goes through here. With tolerate_status a non-zero
+  // reply status is not an error.
   Result transact(uint8_t id, uint8_t instruction, const uint8_t* params, size_t param_len, uint8_t* out,
                   size_t out_len, bool tolerate_status = false);
 
-  std::unique_ptr<ServoController> m_owned;
-  ServoController* m_ctl;
-  uint8_t m_id;
-  uint8_t m_last_status = 0;
-  bool m_readback_check = false;
-  CancelStep m_cancel_step = CancelStep::NONE;
+  std::unique_ptr<ServoController> m_owned;  // Set only by the owning constructor.
+  ServoController* m_ctl;                    // The controller in use: m_owned.get() or the borrowed one.
+  uint8_t m_id;                              // Device ID addressed by the overrides.
+  uint8_t m_last_status = 0;                 // See get_last_status().
+  bool m_readback_check = false;             // See set_readback_check().
+  CancelStep m_cancel_step = CancelStep::NONE;  // See get_cancel_failed_step().
 };
 
 }  // namespace servokit

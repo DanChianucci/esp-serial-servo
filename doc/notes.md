@@ -1,97 +1,105 @@
-WaveshareST3215 Smart Servo
-Robotshop
+# servokit notes
 
+Design notes and open work for the library. For what exists today see the
+[overview](overview.md) and the [API reference](api.md).
 
+## Current structure
 
-TODO:
-  Add Arduino Wire Backend Support
+- `core/`: the family-neutral `Servo`, `RegisterAccess` and value types. No I/O.
+- `serial/`: `SerialPort` (transport interface), `ServoController` (bounded
+  command/response transaction), `ServoPacket` (frame buffer base class),
+  `SerialLink`, and the platform-independent timing helpers (`Deadline`,
+  `SyncMatcher`).
+- `families/stseries/`: the STS protocol frame, register map, unit
+  conversions and the `STSServo` driver. Servo documentation lives in
+  `doc/STS3215`.
+- `platform/`: `ESPSerialPort` for ESP-IDF.
+- `pwm/`: reserved; contains no code.
 
-  Remove c++20 dependencies
-     std::span
-     std::expected
-     initializer lists??
+STS frames use sync `FF FF`, little-endian words and a one-byte checksum.
+Other protocol families are expected to reuse `ServoController` and
+`SerialPort` and supply their own `ServoPacket` subclass, register map and
+`Servo` implementation; the conformance suite in `tests/host/conformance` is
+the check every family's `Servo` implementation runs.
 
-  Split Protocol from memory map more cleanly
+## Open work
 
+Each item is an open task, not a commitment to an order.
 
-  serial_servo
-    protocol
-      base_protocol.h    -> abstract impl of some functions
-      dynamixel_one.h    ->
-      stseries.h         -> little endian
-      scseries.h         -> bigendian
-      dynamixel_two.h    -> 4 byte sync, extra response byte
-    servos
-      st3215.h
-      sc15.h
+### More servo families
 
+- SCS series (for example SC09, SC15): believed to use the STS frame layout
+  with big-endian words and a different memory map. Unverified: needs the
+  vendor documentation checked.
+- Dynamixel protocol 1.0: same frame idea as STS; memory map differs per
+  servo model.
+- Dynamixel protocol 2.0: four-byte sync header (`FF FF FD 00`), a two-byte
+  length field, and replies that carry both an instruction and an error byte.
+  `ServoPacket` and `ServoController::read_response()` assume a one-byte
+  length at a fixed index, so they need generalising first.
+- LX series (for example LX-16A, LX-224): similar framing to STS with a
+  different sync header; memory map and unit conventions to be checked.
 
+### Protocol and register-map separation
 
-    template<SYNC_HEADER, ENDIANNESS, ... >
-    class base_protocol{...}
+- Split the protocol (framing, checksum, endianness, sync header) from the
+  per-model memory map more cleanly, so a new model on an existing protocol
+  needs only a register table. A sketch is a protocol base parameterised on
+  sync header and endianness, with `STSeriesPacket` as one instance.
 
-    class STSeriesPacket : base_protocol<>{...}
-                  or
-    typedef base_protocol<> STSeriesPacket;
+### PWM backend
 
+- A `PwmOutput` port analogous to `SerialPort`, with platform
+  implementations under `platform/`, and a `Servo` implementation on top of
+  it. `pwm/README.md` is the placeholder.
 
+### General-purpose operations
 
+Feature flags exist for these, but no `Servo` method or family implements
+them yet:
 
+- relative moves, multi-turn targets, continuous rotation and PWM drive modes
+  (`MotionMode` has only `ABSOLUTE_POSITION`);
+- position gains, dead zone, angle limits and position offset (calibration);
+- changing a servo's ID and baud rate;
+- bus-level sync write, sync read, deferred write with action, and broadcast
+  addressing;
+- `clear_alarms()`, `reboot` and factory reset, and a speed readback;
+- moving-state helpers such as waiting until a move ends.
 
-  //DynamixelOne
-  //
-  //
+### Platform support
 
+- An Arduino platform port: `servokit.h` includes `platform/arduino.h` when
+  `ARDUINO` or `SERVOKIT_IMPL_ARDUINO` is defined, but the header does not
+  exist yet.
+- `ESPSerialPort` is not built or run by the host tests; its timeout
+  behaviour is not verified on ESP-IDF hardware.
 
+### Language level
 
-  //Waveshare STS Series: https://www.waveshare.com/wiki/ST3215_Servo#Document
-  //  Waveshare ST3020
-  //  Waveshare ST3025
-  //  Waveshare ST3215
-  //  Waveshare ST3235
+- The library needs C++23 (`std::span`, `std::expected`). Supporting older
+  toolchains would need replacements for both (for example Boost's) and a
+  check of the remaining C++20 and C++23 features in use.
 
+### Known code issues
 
-  //Waveshare SCS Series : https://www.waveshare.com/wiki/SC09_Servo#Document
-  // Looks to be the same as dynamixel protocol, but big endian
-  //  Waveshare SC09
-  //  Waveshare SC15
-  //  Waveshare CF35-12
+- `SerialPort` has no virtual destructor. Implementations must not be deleted
+  through a `SerialPort` pointer.
+- `STSeriesPacket::set_word()` writes at the start of the buffer, high byte
+  first, while `get_word()` reads little endian from the given index. Only
+  `set_sync()` uses it, with the symmetric pattern `FFFF`, so nothing is
+  affected today; a general word setter would need the index and byte order
+  fixed.
+- `FakeSerialPort::read_sync()` restarts matching at zero on a mismatch, so it
+  does not find a pattern that begins inside a partial match, unlike
+  `SyncMatcher` and the ESP port.
+- The register ranges of `stseries_defines.h` follow the ST3215 memory table
+  where it is explicit; the table's own range column is inconsistent in places
+  (for example the speed and the operation-mode ranges). Check against
+  hardware before relying on a range.
 
+### Hardware verification
 
-  //Hiwonder
-  //  Same protocol as dynamixel, different sync header
-  //  HiWonder  LX-15D
-  //            LX-16A
-  //            LX-224,
-  //            HTS-35H and
-  //            ...
-
-
-  //Dynamixel2.0
-  //  Same as Dynamixel 1.0 w/
-  //       larger syncheader      FF_FF_FD_00
-  //       length field is        2 bytes
-  //       response contains inst and error instead of just error
-
-
-
-
-
-
-
-
-  Add LXSeries Servo Support
-     - similiar protocol to STSeries
-
-  Add SCSeries Servo Support
-     - Same Protocol as STSeries byte endianness is swapped
-     - different memory map
-
-  Add Dynamixel 1.0 Support
-     - Same Protocol as STSeries
-     -different memory map per servo
-
-  Add Dynamixel 2.0
-    -Similiar to STSeries
-      - longer sync header
-      - response has instruction + status bytes
+Behaviour that follows the vendor documentation but has not been run on a
+servo is listed in the
+[hardware-verification list](api.md#hardware-verification-list).

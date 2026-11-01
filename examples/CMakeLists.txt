@@ -14,6 +14,8 @@ endif()
 
 set(SERVOKIT_ROOT ${CMAKE_CURRENT_LIST_DIR}/..)
 
+# The host-buildable part of the library: everything except the platform port.
+
 add_library(servokit_host STATIC
   ${SERVOKIT_ROOT}/lib/serial/servo_controller.cpp
   ${SERVOKIT_ROOT}/lib/serial/servo_packet.cpp

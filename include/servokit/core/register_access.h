@@ -1,6 +1,6 @@
 //------------------------------------------------------------------------
 // Filename  :  register_access.h
-// Project   :  ESP Serial Servo
+// Project   :  servokit
 //
 // Description:
 //    Register-level access to the servo's own control table (tier 3).
@@ -36,8 +36,12 @@
 
 namespace servokit {
 
+/** Register-level interface to a servo's control table. Implemented by servo
+ *  classes for which Feature::REGISTER_ACCESS is set. See the file header for
+ *  the contract common to every call. */
 class RegisterAccess {
  public:
+  /** Virtual: may be destroyed through a base pointer; sends nothing. */
   virtual ~RegisterAccess() = default;
 
   /** Reads @p len bytes starting at register @p addr.
@@ -54,17 +58,23 @@ class RegisterAccess {
    *  @param len Number of bytes to write; the maximum is family-defined. */
   virtual Result write_register(uint16_t addr, const uint8_t* data, size_t len) = 0;
 
-  /** Reads one byte register. @param[out] out Written on OK only. */
+  /** Reads one byte register.
+   *  @param addr Register address.
+   *  @param[out] out Written on OK only. */
   virtual Result read_u8(uint16_t addr, uint8_t* out) = 0;
 
   /** Reads a 16-bit register, little endian, @p addr = low byte.
    *  @param[out] out Written on OK only. */
   virtual Result read_u16(uint16_t addr, uint16_t* out) = 0;
 
-  /** Writes one byte register. */
+  /** Writes one byte register.
+   *  @param addr Register address.
+   *  @param value Byte to write. */
   virtual Result write_u8(uint16_t addr, uint8_t value) = 0;
 
-  /** Writes a 16-bit register, little endian, @p addr = low byte. */
+  /** Writes a 16-bit register, little endian, @p addr = low byte.
+   *  @param addr Address of the low byte.
+   *  @param value Value to write. */
   virtual Result write_u16(uint16_t addr, uint16_t value) = 0;
 
   /** Turns the readback check on or off (default off). When on, each register

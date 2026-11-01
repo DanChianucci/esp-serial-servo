@@ -1,4 +1,5 @@
-// Host-side fake SerialPort for unit tests. No ESP-IDF/Arduino dependency.
+// Host-side fake SerialPort for unit tests and examples. No platform SDK
+// dependency. Not thread-safe; owned by the test that creates it.
 #ifndef FAKE_SERIAL_PORT__H
 #define FAKE_SERIAL_PORT__H
 
@@ -31,10 +32,15 @@ using Bytes = std::vector<uint8_t>;
 class FakeSerialPort : public servokit::SerialPort {
  public:
   // --- scripting ---
+  /** Queues the bytes the next write will make available to the reader. */
   void script_reply(Bytes reply) { m_replies.push_back(std::move(reply)); }
+  /** Queues an empty reply: the next write is not answered, so reads time out. */
   void script_timeout() { m_replies.emplace_back(); }
+  /** Puts bytes into the receive buffer now, as if they were on the bus before a command. */
   void add_stale_rx(const Bytes& bytes) { m_rx.insert(m_rx.end(), bytes.begin(), bytes.end()); }
+  /** Makes the next write_bytes() fail with SRV_WRITE_FAIL (nothing is logged). */
   void fail_next_write() { m_fail_write = true; }
+  /** Makes the next read_bytes() fail with SRV_READ_FAIL. */
   void fail_next_read() { m_fail_read = true; }
   // Lets the next @p n read_bytes() calls succeed (a reply with a payload takes two), then fails the one after.
   void fail_read_after(int n) { m_fail_read_after = n; }
@@ -49,14 +55,22 @@ class FakeSerialPort : public servokit::SerialPort {
   }
 
   // --- inspection ---
+  /** @return Every frame written so far, one entry per write_bytes() call. */
   const std::vector<Bytes>& tx_log() const { return m_tx; }
+  /** @return Bytes currently buffered for reading. */
   size_t rx_pending() const { return m_rx.size(); }
+  /** @return The last value passed to enable_rx() (true initially). */
   bool rx_enabled() const { return m_rx_enabled; }
+  /** @return How many times discard_input() was called. */
   int discard_count() const { return m_discards; }
+  /** @return How many times flush_output() was called. */
   int flush_count() const { return m_flushes; }
+  /** @return The timeout given to the most recent write_bytes() call. */
   timeout_duration_t last_write_timeout() const { return m_last_write_timeout; }
 
   // --- SerialPort ---
+  // Behaviour of the fake: calls never block and ignore their timeouts, except
+  // that write_bytes() records its timeout.
   servokit::srv_stat_t enable_rx(bool enable) override {
     m_rx_enabled = enable;
     return servokit::SRV_OK;
@@ -74,7 +88,10 @@ class FakeSerialPort : public servokit::SerialPort {
   }
 
   servokit::srv_stat_t read_sync(const buffer_const_t pattern, timeout_duration_t) override {
-    // Mirrors the ESP implementation: consume bytes up to and including the pattern.
+    // Consumes bytes up to and including the pattern, like the real ports. Simple
+    // matching: a mismatch restarts at 0, so unlike SyncMatcher it does not find a
+    // pattern that starts inside a partial match. Returns SRV_TIMEOUT when the
+    // buffered bytes run out first.
     size_t match = 0;
     while (match < pattern.size()) {
       if (m_rx.empty()) return servokit::SRV_TIMEOUT;
@@ -86,6 +103,7 @@ class FakeSerialPort : public servokit::SerialPort {
   }
 
   servokit::srv_result_t read_bytes(const buffer_t data, timeout_duration_t) override {
+    // fail_read_after(n): count n successful calls down, then fail the next one.
     if (m_fail_read_after == 0) m_fail_read = true;
     if (m_fail_read_after >= 0) --m_fail_read_after;
     if (m_fail_read) {

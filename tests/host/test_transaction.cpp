@@ -1,4 +1,5 @@
-// Card 03: transaction hardening tests (flush, timeouts, checksum option, Result mapping).
+// ServoController transaction tests: input flush, bounded timeouts, checksum
+// verification option and the status-code to Result mapping.
 #include <chrono>
 #include <cstdio>
 

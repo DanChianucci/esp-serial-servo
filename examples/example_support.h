@@ -30,11 +30,14 @@ inline Bytes reply(uint8_t id, Bytes data = {}, uint8_t status = 0) {
 }
 
 // Counts failed expectations; main() returns non-zero if any failed.
+// One counter per program: the function-local static is shared by every
+// translation unit that includes this header.
 inline int& failures() {
   static int count = 0;
   return count;
 }
 
+// Checks a condition; on failure prints file, line and the expression and counts it.
 #define EXPECT(cond)                                                \
   do {                                                              \
     if (!(cond)) {                                                  \

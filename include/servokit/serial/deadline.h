@@ -1,3 +1,15 @@
+//------------------------------------------------------------------------
+// Filename  :  deadline.h
+// Project   :  servokit
+//
+// Description:
+//    Deadline arithmetic for platform serial ports: a fixed point in time on
+//    a monotonic clock, and conversions from durations to the whole
+//    milliseconds and RTOS ticks that drivers accept. Header-only, pure
+//    functions and values: no I/O, never blocks, safe from any thread. No
+//    platform dependencies, so it is tested on a host with an injected clock.
+//------------------------------------------------------------------------
+
 #ifndef SERVOKIT_DEADLINE__H
 #define SERVOKIT_DEADLINE__H
 
@@ -22,11 +34,12 @@ namespace timeout {
 template <class Clock = std::chrono::steady_clock>
 class BasicDeadline {
  public:
-  using clock = Clock;
-  using duration = typename Clock::duration;
-  using time_point = typename Clock::time_point;
+  using clock = Clock;                             ///< The clock type.
+  using duration = typename Clock::duration;       ///< The clock's duration type.
+  using time_point = typename Clock::time_point;   ///< The clock's time point type.
 
-  /** @param timeout Time allowed, counted from @p start. */
+  /** @param timeout Time allowed, counted from @p start.
+   *  @param start Reference instant; defaults to the current time. */
   explicit BasicDeadline(duration timeout, time_point start = Clock::now())
       : m_deadline(compute(timeout, start)) {}
 
@@ -39,6 +52,9 @@ class BasicDeadline {
   bool expired(time_point now = Clock::now()) const { return now >= m_deadline; }
 
  private:
+  // Deadline = start + timeout, saturating at the clock's maximum so an
+  // unrepresentably large timeout means "never expires" instead of wrapping
+  // into the past. A non-positive timeout is expired at construction.
   static time_point compute(duration timeout, time_point start) {
     if (timeout <= duration::zero()) return start;
     // For a start before the clock epoch, start + timeout cannot overflow
@@ -50,6 +66,7 @@ class BasicDeadline {
   time_point m_deadline;
 };
 
+/** Deadline on the monotonic std::chrono::steady_clock, the one used in production. */
 using Deadline = BasicDeadline<std::chrono::steady_clock>;
 
 /** Converts a duration to whole milliseconds, rounding up.

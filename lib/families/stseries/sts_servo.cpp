@@ -1,3 +1,7 @@
+// STSServo: the register layer (transport framing, register reads and writes,
+// readback check). The typed helpers are in sts_servo_family.cpp and the
+// generic Servo operations in sts_servo_generic.cpp. The contract of every
+// public member is documented in sts_servo.h.
 #include "servokit/families/stseries/sts_servo.h"
 
 #include <algorithm>
@@ -13,6 +17,8 @@ namespace {
 // 6 meta bytes + MAX_SPAN data (read responses).
 constexpr size_t FRAME_BUF = STS::NUM_META_BYTES + 1 + STSServo::MAX_SPAN;
 
+// One row of the readback table: the bytes [addr, addr + bytes) share a class
+// and a compare mask.
 struct TableEntry {
   uint8_t addr;
   uint8_t bytes;
@@ -25,6 +31,9 @@ constexpr auto MASKED = STSServo::ReadbackClass::STABLE_MASKED;
 constexpr auto VOLATILE = STSServo::ReadbackClass::VOLATILE;
 
 // Writable registers of the STS control table; documented in sts_servo.h.
+// A register is VOLATILE when the servo can change its value without a host
+// write (so a read-back would legitimately differ), and STABLE otherwise.
+// Rows are searched linearly (the table is short).
 constexpr TableEntry READBACK_TABLE[] = {
     {STS::REG_DEVICE_ID, 1, STABLE, 0xFF},
     {STS::REG_BAUD_RATE, 1, VOLATILE, 0x00},
@@ -65,6 +74,8 @@ constexpr TableEntry READBACK_TABLE[] = {
 };
 }  // namespace
 
+// Anything not in the table (read-only registers, gaps, addresses past the
+// map) is VOLATILE with mask 0, so it is never compared.
 STSServo::ReadbackRule STSServo::readback_rule(uint16_t addr) {
   for (const TableEntry& e : READBACK_TABLE) {
     if (addr >= e.addr && addr < e.addr + e.bytes) return {e.kind, e.mask};
@@ -77,11 +88,15 @@ STSServo::STSServo(ServoController* controller, uint8_t id) : m_ctl(controller),
 STSServo::STSServo(std::unique_ptr<ServoController> controller, uint8_t id)
     : m_owned(std::move(controller)), m_ctl(m_owned.get()), m_id(id) {}
 
+// Broadcast (0xFE) is rejected because no servo answers it and the call would
+// only time out. The reply's ID is checked against the request's so a reply
+// from another servo is never accepted.
 Result STSServo::transact(uint8_t id, uint8_t instruction, const uint8_t* params, size_t param_len, uint8_t* out,
                           size_t out_len, bool tolerate_status) {
   m_last_status = 0;
   if (m_ctl == nullptr || id >= STS::BROADCAST_ID) return Result::PARAM;
 
+  // Frames live on the stack: the largest possible frame is bounded by MAX_SPAN.
   uint8_t cbuf[FRAME_BUF];
   uint8_t rbuf[FRAME_BUF];
   STSeriesPacket cmd{buffer_t(cbuf)};
@@ -95,6 +110,7 @@ Result STSServo::transact(uint8_t id, uint8_t instruction, const uint8_t* params
   // Sync, length and (when enabled) checksum were validated by the controller.
   // The ID is compared again so a reply from another servo is never accepted.
   if (rsp.get_packet_device_id() != id) return Result::BAD_RESPONSE;
+  // In a reply the code byte is the status (alarm bits).
   m_last_status = rsp.get_code();
   if (m_last_status != STS::STAT_OK && !tolerate_status) return Result::BAD_RESPONSE;
   if (rsp.get_length() != out_len + STS::NUM_CODE_BYTES + STS::NUM_CHKSUM_BYTES) return Result::BAD_RESPONSE;
@@ -112,7 +128,7 @@ Result STSServo::probe(uint8_t id) { return transact(id, STS::CMD_PING, nullptr,
 Result STSServo::read_register(uint8_t id, uint16_t addr, uint8_t* data, size_t len) {
   if (data == nullptr || len == 0) return Result::PARAM;
   if (len > MAX_SPAN || addr + len > REGISTER_SPACE) return Result::OUT_OF_RANGE;
-  const uint8_t params[2] = {static_cast<uint8_t>(addr), static_cast<uint8_t>(len)};
+  const uint8_t params[2] = {static_cast<uint8_t>(addr), static_cast<uint8_t>(len)};  // READ params: address, byte count
   // Read into a scratch copy so the caller's buffer is untouched on failure.
   uint8_t tmp[MAX_SPAN];
   const Result r = transact(id, STS::CMD_READ, params, sizeof(params), tmp, len);
@@ -120,6 +136,9 @@ Result STSServo::read_register(uint8_t id, uint16_t addr, uint8_t* data, size_t 
   return r;
 }
 
+// Same as read_register() for the stored ID, except that a reply whose status
+// byte reports an alarm is still a successful read; the data of such a reply is
+// valid and callers (telemetry, cancel_motion) report the alarm themselves.
 Result STSServo::read_with_status(uint16_t addr, uint8_t* data, size_t len) {
   if (data == nullptr || len == 0) return Result::PARAM;
   if (len > MAX_SPAN || addr + len > REGISTER_SPACE) return Result::OUT_OF_RANGE;
@@ -133,17 +152,20 @@ Result STSServo::read_with_status(uint16_t addr, uint8_t* data, size_t len) {
 Result STSServo::write_register(uint8_t id, uint16_t addr, const uint8_t* data, size_t len) {
   if (data == nullptr || len == 0) return Result::PARAM;
   if (len > MAX_SPAN || addr + len > REGISTER_SPACE) return Result::OUT_OF_RANGE;
-  uint8_t params[1 + MAX_SPAN];
+  uint8_t params[1 + MAX_SPAN];  // WRITE params: address, then the bytes
   params[0] = static_cast<uint8_t>(addr);
   std::copy(data, data + len, params + 1);
   const Result w = transact(id, STS::CMD_WRITE, params, 1 + len, nullptr, 0);
   if (w != Result::OK || !m_readback_check) return w;
 
+  // Skip the read when no byte of the span would be compared, so a span of only
+  // volatile registers costs exactly one frame.
   bool any_compared = false;
   for (size_t i = 0; i < len; ++i) any_compared = any_compared || readback_rule(addr + i).mask != 0;
   if (!any_compared) return Result::OK;
 
-  // A write covering REG_DEVICE_ID moves the servo to the new ID.
+  // A write covering REG_DEVICE_ID moves the servo to the new ID, so the
+  // read-back must be addressed to the new one.
   uint8_t read_id = id;
   if (addr <= STS::REG_DEVICE_ID && STS::REG_DEVICE_ID < addr + len) {
     read_id = data[STS::REG_DEVICE_ID - addr];
@@ -152,6 +174,7 @@ Result STSServo::write_register(uint8_t id, uint16_t addr, const uint8_t* data, 
   uint8_t back[MAX_SPAN];
   const Result r = read_register(read_id, addr, back, len);
   if (r != Result::OK) return r;
+  // XOR finds differing bits; the mask keeps only the bits that are compared.
   for (size_t i = 0; i < len; ++i) {
     if (((back[i] ^ data[i]) & readback_rule(addr + i).mask) != 0) return Result::VERIFY_FAILED;
   }
@@ -164,14 +187,14 @@ Result STSServo::read_u16(uint8_t id, uint16_t addr, uint16_t* out) {
   if (out == nullptr) return Result::PARAM;
   uint8_t b[2];
   const Result r = read_register(id, addr, b, 2);
-  if (r == Result::OK) *out = static_cast<uint16_t>(b[0] | (b[1] << 8));
+  if (r == Result::OK) *out = static_cast<uint16_t>(b[0] | (b[1] << 8));  // little endian
   return r;
 }
 
 Result STSServo::write_u8(uint8_t id, uint16_t addr, uint8_t value) { return write_register(id, addr, &value, 1); }
 
 Result STSServo::write_u16(uint8_t id, uint16_t addr, uint16_t value) {
-  const uint8_t b[2] = {static_cast<uint8_t>(value & 0xFF), static_cast<uint8_t>(value >> 8)};
+  const uint8_t b[2] = {static_cast<uint8_t>(value & 0xFF), static_cast<uint8_t>(value >> 8)};  // low byte first
   return write_register(id, addr, b, 2);
 }
 
