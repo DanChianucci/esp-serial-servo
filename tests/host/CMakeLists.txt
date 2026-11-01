@@ -71,3 +71,6 @@ target_include_directories(test_sts_generic PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../../include)
 target_compile_options(test_sts_generic PRIVATE -Wall -Wextra)
 add_test(NAME test_sts_generic COMMAND test_sts_generic)
+
+# Examples (one per access tier) built and run with the tests.
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../examples examples)
