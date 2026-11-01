@@ -1,4 +1,3 @@
-#include <cstring>
 
 #include "servokit/stseries/sts_servo.h"
 

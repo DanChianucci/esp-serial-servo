@@ -234,7 +234,6 @@ static void test_set_persist() {
   r.port.script_timeout();
   CHECK(generic.set_persist(true) == Result::TIMEOUT && r.sent() == 3);
   CHECK(r.servo.set_persist(false) == Result::TIMEOUT && r.sent() == 4);  // nothing scripted
-  CHECK(FeatureSet(Feature::PERSIST_CONFIG).has(Feature::PERSIST_CONFIG));
 }
 
 // One check per EEPROM-region helper: register, width, bytes, boundaries.

@@ -57,11 +57,11 @@ class Servo {
     return Result::UNSUPPORTED;
   }
 
-  /** Puts the servo in absolute-target mode over the full domain. Reads first
-   *  and writes only on difference (EEPROM wear). */
+  /** Puts the servo in absolute-target mode over the full domain. Writes the
+   *  mode registers as given. */
   virtual Result prepare() { return Result::UNSUPPORTED; }
 
-  /** Programs servo-side protection (read-compare-write).
+  /** Programs servo-side protection.
    *  @param protection Thresholds; unsupported fields are ignored. */
   virtual Result set_protection(const Protection& protection) {
     (void)protection;
