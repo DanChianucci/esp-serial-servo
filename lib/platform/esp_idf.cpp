@@ -1,13 +1,13 @@
-#include "serial_servo/platform/esp_idf.h"
+#include "servokit/platform/esp_idf.h"
 
 #include <driver/gpio.h>
 #include <driver/uart.h>
 #include <soc/gpio_periph.h>
 #include <soc/uart_periph.h>
 
-#include "serial_servo/base/servo_internal.h"
+#include "servokit/serial/servo_internal.h"
 
-namespace esp_serial_servo {
+namespace servokit {
 using namespace timeout;
 
 int def_rx_buffer_size(int uart_num, int rx_buffer_size) {
@@ -24,7 +24,7 @@ gpio_mode_t def_tx_gpio_mode(int tx_pin, int rx_pin, bool od) {
   return (gpio_mode_t)result;
 }
 
-ESPServoBus::ESPServoBus(uart_port_t uart_num, gpio_num_t tx_pin, gpio_num_t rx_pin, int baud_rate, int rx_buffer_size,
+ESPSerialPort::ESPSerialPort(uart_port_t uart_num, gpio_num_t tx_pin, gpio_num_t rx_pin, int baud_rate, int rx_buffer_size,
                    int tx_buffer_size, int intr_alloc_flags, bool tx_od, bool tx_pu, bool rx_pu)
     : m_initialized(false),
       m_uart_num(uart_num),
@@ -38,7 +38,7 @@ ESPServoBus::ESPServoBus(uart_port_t uart_num, gpio_num_t tx_pin, gpio_num_t rx_
       m_tx_pu(tx_pu),
       m_rx_pu(rx_pu) {}
 
-srv_stat_t ESPServoBus::initialize() {
+srv_stat_t ESPSerialPort::initialize() {
   SRV_RETURN_IF(m_initialized, SRV_FAIL);
   SRV_RETURN_IF(uart_is_driver_installed(m_uart_num), SRV_FAIL);
 
@@ -49,7 +49,7 @@ srv_stat_t ESPServoBus::initialize() {
   return SRV_OK;
 }
 
-srv_stat_t ESPServoBus::initialize_uart() {
+srv_stat_t ESPSerialPort::initialize_uart() {
   uart_config_t uart_config = {.baud_rate = m_baud_rate,
                                .data_bits = UART_DATA_8_BITS,
                                .parity = UART_PARITY_DISABLE,
@@ -69,7 +69,7 @@ srv_stat_t ESPServoBus::initialize_uart() {
   return SRV_OK;
 }
 
-srv_stat_t ESPServoBus::initialize_gpio() {
+srv_stat_t ESPSerialPort::initialize_gpio() {
   gpio_config_t tx_config = {.pin_bit_mask = BIT64(m_tx_pin),
                              .mode = def_tx_gpio_mode(m_tx_pin, m_rx_pin, m_tx_od),
                              .pull_up_en = m_tx_pu ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE,
@@ -97,7 +97,7 @@ srv_stat_t ESPServoBus::initialize_gpio() {
   return SRV_OK;
 }
 
-srv_stat_t ESPServoBus::close() {
+srv_stat_t ESPSerialPort::close() {
   if (m_initialized) {
     m_initialized = false;
     SRV_RETURN_IF(uart_driver_delete(m_uart_num) != ESP_OK, SRV_PARAM_ERR);
@@ -107,7 +107,7 @@ srv_stat_t ESPServoBus::close() {
   return SRV_OK;
 }
 
-srv_stat_t ESPServoBus::enable_rx(bool enable) {
+srv_stat_t ESPSerialPort::enable_rx(bool enable) {
   if (enable) {
     SRV_RETURN_IF(uart_enable_rx_intr(m_uart_num) != ESP_OK, SRV_PARAM_ERR);
   } else {
@@ -116,12 +116,12 @@ srv_stat_t ESPServoBus::enable_rx(bool enable) {
   return SRV_OK;
 }
 
-srv_stat_t ESPServoBus::discard_input() {
+srv_stat_t ESPSerialPort::discard_input() {
   SRV_RETURN_IF(uart_flush_input(m_uart_num) != ESP_OK, SRV_PARAM_ERR);
   return SRV_OK;
 }
 
-srv_stat_t ESPServoBus::flush_output(timeout_duration_t timeout) {
+srv_stat_t ESPSerialPort::flush_output(timeout_duration_t timeout) {
   int ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count();
   int result = uart_wait_tx_done(m_uart_num, pdMS_TO_TICKS(ms));
 
@@ -130,7 +130,7 @@ srv_stat_t ESPServoBus::flush_output(timeout_duration_t timeout) {
   return SRV_OK;
 }
 
-srv_stat_t ESPServoBus::read_sync(const buffer_const_t pattern, timeout_duration_t timeout) {
+srv_stat_t ESPSerialPort::read_sync(const buffer_const_t pattern, timeout_duration_t timeout) {
   size_t match_index = 0;
   int bytes_read = 0;
   timeout_duration_t remaining = timeout;
@@ -156,14 +156,14 @@ srv_stat_t ESPServoBus::read_sync(const buffer_const_t pattern, timeout_duration
   return SRV_OK;
 }
 
-srv_result_t ESPServoBus::read_bytes(const buffer_t data, timeout_duration_t timeout) {
+srv_result_t ESPSerialPort::read_bytes(const buffer_t data, timeout_duration_t timeout) {
   uint32_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count();
   int result = uart_read_bytes(m_uart_num, data.data(), data.size(), pdMS_TO_TICKS(ms));
   SRV_RETURN_IF(result == ESP_FAIL, SRV_READ_FAIL);
   return result;
 }
 
-srv_result_t ESPServoBus::write_bytes(const buffer_const_t data, timeout_duration_t timeout) {
+srv_result_t ESPSerialPort::write_bytes(const buffer_const_t data, timeout_duration_t timeout) {
   int result = uart_write_bytes(m_uart_num, data.data(), data.size());
   SRV_RETURN_IF(result == ESP_FAIL, SRV_WRITE_FAIL);
 
@@ -173,6 +173,6 @@ srv_result_t ESPServoBus::write_bytes(const buffer_const_t data, timeout_duratio
   return result;
 }
 
-ESPServoBus::~ESPServoBus() { close(); }
+ESPSerialPort::~ESPSerialPort() { close(); }
 
-}  // namespace esp_serial_servo
+}  // namespace servokit

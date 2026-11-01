@@ -31,9 +31,9 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "serial_servo/base/servo_types.h"
+#include "servokit/core/servo_types.h"
 
-namespace serial_servo {
+namespace servokit {
 class Servo {
  public:
   virtual ~Servo() = default;
@@ -135,6 +135,6 @@ class Servo {
   /** Count of responses with a bad checksum seen; 0 if unsupported. */
   virtual uint32_t checksum_errors() const { return 0; }
 };
-}  // namespace serial_servo
+}  // namespace servokit
 
 #endif  // SERVO__H

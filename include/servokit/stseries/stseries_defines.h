@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 
-namespace esp_serial_servo {
+namespace servokit {
 
 namespace STS {
 
@@ -150,5 +150,5 @@ typedef enum {
 } reg_addr_e;
 
 }  // namespace STS
-}  // namespace esp_serial_servo
+}  // namespace servokit
 #endif  // STSERIES_DEFINES__H

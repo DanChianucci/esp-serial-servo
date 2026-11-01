@@ -4,12 +4,12 @@
 #include <hal/gpio_types.h>
 #include <hal/uart_types.h>
 
-#include "serial_servo/base/servo_bus.h"
+#include "servokit/serial/serial_port.h"
 
-namespace esp_serial_servo {
-class ESPServoBus : public ServoBus {
+namespace servokit {
+class ESPSerialPort : public SerialPort {
  public:
-  ESPServoBus(uart_port_t uart_num, gpio_num_t tx_pin, gpio_num_t rx_pin, int baud_rate = 115200,
+  ESPSerialPort(uart_port_t uart_num, gpio_num_t tx_pin, gpio_num_t rx_pin, int baud_rate = 115200,
               int rx_buffer_size = -1, int tx_buffer_size = 0, int intr_alloc_flags = 0, bool tx_od = true,
               bool tx_pu = true, bool rx_pu = true);
 
@@ -71,7 +71,7 @@ class ESPServoBus : public ServoBus {
    */
   srv_result_t write_bytes(const buffer_const_t, timeout_duration_t timeout = timeout_duration_t::max());
 
-  ~ESPServoBus();
+  ~ESPSerialPort();
 
   uart_port_t get_uart_num() { return m_uart_num; }
   gpio_num_t get_tx_pin() { return m_tx_pin; }
@@ -104,6 +104,6 @@ class ESPServoBus : public ServoBus {
   const bool m_rx_pu;  //!< RX Pullup Enabled
 };
 
-}  // namespace esp_serial_servo
+}  // namespace servokit
 
 #endif  // SERIALSERVO_PLATFORM_ESPIDF__H

@@ -3,9 +3,9 @@
 #include <cstdint>
 #include <span>
 
-#include "serial_servo/base/servo_utils.h"
+#include "servokit/core/servo_utils.h"
 
-namespace esp_serial_servo {
+namespace servokit {
 class ServoPacket {
  public:
   static constexpr char LOG_TAG[] = "ServoPacket";
@@ -53,5 +53,5 @@ class ServoPacket {
   size_t m_size;
 };
 
-}  // namespace esp_serial_servo
+}  // namespace servokit
 #endif  // SERVOPACKET__H

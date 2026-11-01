@@ -3,10 +3,10 @@
 
 #include <cstdint>
 
-#include "serial_servo/base/servo_packet.h"
-#include "serial_servo/stseries/stseries_defines.h"
+#include "servokit/serial/servo_packet.h"
+#include "servokit/stseries/stseries_defines.h"
 
-namespace esp_serial_servo {
+namespace servokit {
 class ServoController;
 
 
@@ -62,5 +62,5 @@ class STSeriesPacket : public ServoPacket {
   inline srv_stat_t set_word(size_t idx, uint16_t val);
 };
 
-}  // namespace esp_serial_servo
+}  // namespace servokit
 #endif  // STSERIESPACKET__H
