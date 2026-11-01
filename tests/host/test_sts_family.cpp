@@ -46,7 +46,10 @@ struct Rig {
   ServoController ctl{&port, milliseconds(10), milliseconds(20)};
   STSServo servo{&ctl, 1};
   size_t sent() const { return port.tx_log().size(); }
-  const Bytes& tx(size_t i) const { return port.tx_log()[i]; }
+  const Bytes& tx(size_t i) const {
+    static const Bytes empty;
+    return i < port.tx_log().size() ? port.tx_log()[i] : empty;
+  }
   void ack() { port.script_reply(reply()); }
   void value(Bytes v) { port.script_reply(reply(v)); }
 };

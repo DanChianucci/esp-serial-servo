@@ -32,7 +32,7 @@
 //
 //    Typed helpers (set_*/get_*):
 //      Target    The servo whose ID is device_id(). A broadcast or invalid ID
-//                makes every helper that reads the bus return PARAM.
+//                makes every helper that uses the bus return PARAM.
 //      Ranges    Only hardware ranges are enforced. An out-of-range argument
 //                returns OUT_OF_RANGE and sends nothing.
 //      Units     Native register units, stated per helper.
