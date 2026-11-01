@@ -63,6 +63,7 @@
 #include "servokit/core/servo_types.h"
 #include "servokit/serial/servo_controller.h"
 #include "servokit/stseries/stseries_defines.h"
+#include "servokit/stseries/sts_units.h"
 
 namespace servokit {
 
@@ -230,19 +231,102 @@ class STSServo : public Servo {
   bool verify_checksum() const override;
   uint32_t checksum_errors() const override;
 
-  // Placeholders; the family API supplies the real behaviour.
+  // --- Generic Servo implementation (see sts_servo_generic.cpp) ---
+  // Built on the register helpers above. Angles use 4096 steps per revolution
+  // (87.890625 mdeg/step). Every write is performed as given: no operation
+  // here reads before writing, compares, or changes REG_EEPROM_LOCK; the
+  // caller sequences set_persist() around configuration writes. Atomic
+  // telemetry reads and the position read of hold() are the only reads.
+
+  /** Absolute move: converts @p angle_mdeg to steps (rounded to nearest) and
+   *  writes REG_CTRL_POS once.
+   *  @return OK, OUT_OF_RANGE outside capabilities().limits angle domain
+   *          (nothing sent), or the write's error. */
   Result move_to(int32_t angle_mdeg) override;
+
+  /** Fixed description of the STS family; does not touch the bus and does not
+   *  depend on read_identity(). Features are those the generic operations
+   *  below perform. The current range is the reportable range: the largest
+   *  magnitude of the 15-bit current feedback, so a telemetry sample never lies
+   *  outside it. The range a stall-current threshold may be set to is narrower
+   *  (MAX_CURRENT_LIMIT units); set_protection() rejects larger values. Not asserted because they are unverified on hardware:
+   *  MULTI_TURN_POS and RETAINS_POSITION_UNPOWERED. The domain is the
+   *  -MAX_TARGET_POSITION..MAX_TARGET_POSITION steps; resolution_mdeg is the step size
+   *  87.890625 mdeg rounded to 88. */
   Capabilities capabilities() const override;
+
+  /** Reads the model, firmware version and device ID registers in one
+   *  transaction. The device ID is the value stored in the servo. */
+  Result read_identity(Identity* out) override;
+
+  /** Writes REG_RESPONSE_MODE = RSP_ALL, then REG_OPERATION_MODE = OP_SERVO
+   *  (position mode). That position mode is the right one for the
+   *  generic operations is not verified on hardware. Two plain writes, no reads. If the servo was in RSP_READ_PING
+   *  its reply to the first write is missing: that write takes effect but
+   *  TIMEOUT is returned and the second write is not sent; call again. */
+  Result prepare() override;
+
+  /** Programs stall_current_ma into REG_OVERCURR_THRESH (6.5 mA units),
+   *  stall_time_ms into REG_OVERCURR_TIME (10 ms units), max_temperature_c
+   *  into REG_OVERTEMP_THRESH and release_on_alarm into REG_UNLOAD_ALARM_MASK.
+   *  All values are validated first; any value that does not fit a register,
+   *  or an alarm with no native bit (STALLED, COMMUNICATION, UNLOADED, OTHER),
+   *  returns OUT_OF_RANGE and sends nothing. Values are never clamped because
+   *  that would silently weaken a threshold. Zero is written as given.
+   *  Overload and voltage thresholds are not part of Protection and are not
+   *  written. OVER_VOLTAGE and UNDER_VOLTAGE share one native bit (the servo
+   *  does not distinguish them), so requesting either releases torque on both.
+   *  Four plain writes, no reads; stops at the first failure. The
+   *  units and the meaning of the thresholds are unverified on hardware. */
+  Result set_protection(const Protection& protection) override;
+
+  /** Writes REG_CTRL_TORQUE, REG_START_TORQUE, REG_CTRL_ACCEL, REG_CTRL_SPEED
+   *  (in that order, one plain write each, no reads). Speed, acceleration and
+   *  torques are clamped to capabilities().limits and converted to native
+   *  units. REG_START_TORQUE is an EEPROM-region register, so it follows the
+   *  lock state. Stops at the first failure. */
+  Result set_profile(const Profile& profile) override;
+
+  /** Reads REG_POSITION, then writes it as the target (REG_CTRL_POS), so the
+   *  servo stops where it is. Torque must already be enabled. Two transactions.
+   *  Returns the failing sub-operation's error; hold_failed_step() says which.
+   *  A position read outside -MAX_TARGET_POSITION..MAX_TARGET_POSITION returns
+   *  OUT_OF_RANGE with POSITION_OUT_OF_DOMAIN and nothing is written.
+   *  A servo that reports an alarm in its status byte still yields its
+   *  position. Never reports OK for a write that was not acknowledged. */
+  Result hold() override;
+
+  /** Sub-operation that failed in the most recent hold(). */
+  enum class HoldStep : uint8_t { NONE, READ_POSITION, POSITION_OUT_OF_DOMAIN, WRITE_TARGET };
+  HoldStep hold_failed_step() const { return m_hold_step; }
+
+  /** Writes REG_SERVO_EN (true = torque on). */
+  Result set_torque(bool enable) override;
+
+  /** One atomic sample from a single 15-byte read of REG_POSITION..REG_CURRENT.
+   *  Filled on OK only; any transport error, short reply or undecodable field
+   *  (load outside +-1000 permille, moving flag other than 0/1) fails the
+   *  whole call. A servo that reports an alarm still returns its sample, with
+   *  the alarm in Telemetry::alarms (REG_STATUS and the reply status byte
+   *  combined). Position is single-turn feedback; the load and current
+   *  encodings are unverified on hardware. */
+  Result read_telemetry(Telemetry* out) override;
+
+  /** Reads REG_STATUS (one byte) and returns it combined with the reply status
+   *  byte, translated through STS::units::alarms_from_native(). */
+  Result read_alarms(AlarmSet* out) override;
 
  private:
   Result read_bool(uint16_t addr, bool* out);
+  Result read_with_status(uint16_t addr, uint8_t* data, size_t len);
   Result transact(uint8_t id, uint8_t instruction, const uint8_t* params, size_t param_len, uint8_t* out,
-                  size_t out_len);
+                  size_t out_len, bool tolerate_status = false);
 
   std::unique_ptr<ServoController> m_owned;
   ServoController* m_ctl;
   uint8_t m_id;
   uint8_t m_last_status = 0;
+  HoldStep m_hold_step = HoldStep::NONE;
 };
 
 }  // namespace servokit

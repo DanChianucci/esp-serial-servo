@@ -237,8 +237,7 @@ static void test_no_controller_and_ownership() {
   STSServo owned(std::make_unique<ServoController>(&port, milliseconds(10), milliseconds(20)), 3);
   port.script_reply(frame(3, 0, {}));
   CHECK(owned.ping() == Result::OK);
-  CHECK(owned.move_to(0) == Result::UNSUPPORTED);
-  CHECK(owned.capabilities().features.none());
+  CHECK(owned.capabilities().features.has(Feature::ABSOLUTE_POSITION));
 }
 
 int main() {
