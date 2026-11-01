@@ -216,6 +216,15 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
    *  @param id Device ID used by the Servo and RegisterAccess overrides. */
   explicit STSServo(std::unique_ptr<ServoController> controller, uint8_t id = 1);
 
+  /** Not copyable and not movable. When the object owns its controller,
+   *  m_ctl points into the owned object; a copy would share it and a move
+   *  would leave the moved-from object holding a dangling m_ctl. Hold the
+   *  servo in place (or behind a std::unique_ptr) instead of moving it. */
+  STSServo(const STSServo&) = delete;
+  STSServo& operator=(const STSServo&) = delete;
+  STSServo(STSServo&&) = delete;
+  STSServo& operator=(STSServo&&) = delete;
+
   /** Device ID used by the Servo overrides. Does not touch the bus. */
   uint8_t get_device_id() const { return m_id; }
   /** Changes only the ID this object addresses; sends nothing and does not

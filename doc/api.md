@@ -452,6 +452,7 @@ STS-specific rules:
 |---|---|---|
 | `STSServo(ServoController*, id = 1)` | 2 | Borrows the controller (must outlive the servo). A null controller makes every bus call return `PARAM`. |
 | `STSServo(std::unique_ptr<ServoController>, id = 1)` | 2 | Takes ownership of the controller; its `SerialPort` must outlive the servo. |
+| copy and move operations | 2 | Deleted: `STSServo` is neither copyable nor movable. An object that owns its controller would otherwise leave a moved-from object with a dangling controller pointer. Construct it in place, or hold it behind a `std::unique_ptr`. |
 | `get_device_id()` | 2 | ID used by methods without an `id` parameter. No bus access. |
 | `set_device_id(id)` | 2 | Changes only the ID this object addresses. Sends nothing; it does not reprogram the servo. |
 | `get_last_status()` | 2 | Status byte of the most recent valid reply (bitmask of `err_code_t`, 0 when healthy). Reset at the start of every call that uses the bus; stays 0 if no valid reply arrived. |
