@@ -132,8 +132,7 @@ class ServoController {
   srv_stat_t flush_rx();
 
   /** Total time (send + response) one command_response() may take. Always finite
-   *  and positive; defaults to tx_timeout + rx_timeout from the constructor.
-   *  Zero or negative values are rejected with SRV_PARAM_ERR. */
+   *  and positive; defaults to tx_timeout + rx_timeout from the constructor. */
   timeout_duration_t get_transaction_timeout() const { return m_transaction_timeout; }
   /** Sets the transaction budget.
    *  @return SRV_OK, or SRV_PARAM_ERR if @p timeout is not positive (unchanged). */

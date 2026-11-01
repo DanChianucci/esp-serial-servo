@@ -23,7 +23,7 @@ layer, which it adds on ESP-IDF builds.
 | core | `core/servo.h`, `core/register_access.h`, `core/servo_types.h`, `core/servo_utils.h` | Generic `Servo` interface, the `RegisterAccess` interface, value types (`Result`, `Capabilities`, `Telemetry`, `AlarmSet`, ...), status codes. No I/O. |
 | serial | `serial/serial_port.h`, `serial/serial_link.h`, `serial/servo_controller.h`, `serial/servo_packet.h`, `serial/deadline.h` | `SerialPort` transport interface, `SerialLink` (checksum settings), `ServoController` (one command/response transaction with bounded time), packet base class, `Deadline` (monotonic deadline used by the ESP-IDF port). |
 | families/stseries | `families/stseries/sts_servo.h`, `families/stseries/sts_units.h`, `families/stseries/stseries_packet.h`, `families/stseries/stseries_defines.h` | STS protocol framing, register map, unit conversions and the `STSServo` driver. |
-| pwm | `pwm/` | Reserved for PWM-driven servos. Contains no code yet. |
+| pwm | `include/servokit/pwm/` | Reserved for PWM-driven servos. Contains only a README. |
 | platform | `platform/esp_idf.h` | `ESPSerialPort`, a `SerialPort` on an ESP-IDF UART. |
 
 Dependencies point downward: `families/stseries` uses `serial` and `core`; `serial`

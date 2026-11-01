@@ -21,8 +21,8 @@
 //                 ticks. A zero or negative timeout still makes one
 //                 non-blocking attempt. A timeout too large to represent
 //                 never expires.
-//      Blocking   Each method blocks for at most its timeout (the platform
-//                 documents any step it cannot bound).
+//      Blocking   Each method that takes a timeout blocks for at most that
+//                 timeout; the platform documents any step it cannot bound.
 //      Threads    Not thread-safe. Serialize all calls on one port.
 //      Lifetimes  Buffers are used only during the call and never retained.
 //      Errors     Returned as srv_stat_t / srv_result_t status codes

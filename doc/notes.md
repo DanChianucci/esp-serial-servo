@@ -14,7 +14,7 @@ Design notes and open work for the library. For what exists today see the
   conversions and the `STSServo` driver. Servo documentation lives in
   `doc/STS3215`.
 - `platform/`: `ESPSerialPort` for ESP-IDF.
-- `pwm/`: reserved; contains no code.
+- `pwm/`: reserved; contains only a README.
 
 STS frames use sync `FF FF`, little-endian words and a one-byte checksum.
 Other protocol families are expected to reuse `ServoController` and
@@ -51,7 +51,7 @@ Each item is an open task, not a commitment to an order.
 
 - A `PwmOutput` port analogous to `SerialPort`, with platform
   implementations under `platform/`, and a `Servo` implementation on top of
-  it. `pwm/README.md` is the placeholder.
+  it. `include/servokit/pwm/README.md` is the placeholder.
 
 ### General-purpose operations
 

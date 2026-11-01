@@ -184,7 +184,7 @@ typedef enum {
   // Operation Control
   REG_START_TORQUE       = 0x18, // Minimum starting control Torque                   @details `0x18 (24) | 2B | RW | EEPROM` @note values: [0,1000]             @note unit:  0.1%
   REG_OPERATION_MODE     = 0x21, // Operating Mode Control                            @details `0x21 (33) | 1B | RW | EEPROM` @note values: `op_mode_t`         @note unit:  enum
-  REG_UNLOAD_CTRL_TORQUE = 0x22, // Maximum Control Torque for Unloaded condition     @details `0x22 (34) | 1B | RW | EEPROM` @note values: [0,100] meaningful (table range [0,254]) @note unit:  1.0% of maximum torque
+  REG_UNLOAD_CTRL_TORQUE = 0x22, // Protective torque: output torque after an overload protection trip     @details `0x22 (34) | 1B | RW | EEPROM` @note values: [0,100] meaningful (table range [0,254]) @note unit:  1.0% of maximum torque
   REG_SERVO_EN           = 0x28, // Servo Enable / Disable (torque switch)            @details `0x28 (40) | 1B | RW | SRAM`   @note values: `servo_en_t`       @note unit: enum                @note value 128 calibrates the current position to 2048 (`REG_POS_OFFSET` correction)
   REG_CTRL_ACCEL         = 0x29, // Acceleration Control                              @details `0x29 (41) | 1B | RW | SRAM`   @note values: [0,254]              @note unit:  100 steps/sec^2
   REG_CTRL_POS           = 0x2A, // Position / STEP Control (target)                  @details `0x2A (42) | 2B | RW | SRAM`   @note values: [+-32766] per the memory table (the library limits itself to +-30719) @note unit:  1step @note bit[15] = direction (sign-magnitude)
