@@ -30,15 +30,90 @@
 //                reply to writes; write calls then return TIMEOUT even though
 //                the write took effect.
 //
+//    Write verification (set_verify_writes(), off by default):
+//      Effect    After a successful write of a register span, one read of the
+//                same span is sent and each byte is compared with the byte
+//                written, through that byte's compare mask (see verify_rule()).
+//                The read is addressed to the written ID, except that a write
+//                covering REG_DEVICE_ID reads from the newly written ID. When
+//                that ID is above STS::MAX_ID (0xFC) the servo cannot be
+//                addressed, so nothing is read back and the write returns OK.
+//      Scope     Done once in write_register(), so write_u8(), write_u16(),
+//                write_raw(), every typed helper and every generic operation
+//                that writes are verified alike. Exactly one extra read frame
+//                per write that has at least one compared byte; none for a
+//                span with only volatile or unlisted bytes. With the setting
+//                off, no extra frame is sent.
+//      Results   A write error is returned as is and nothing is read. A failed
+//                read-back returns that read's own error (the write took
+//                effect). A difference in a compared bit returns VERIFY_FAILED
+//                (the write took effect; the servo holds a different value).
+//      Registers Each writable register is classified in verify_rule():
+//                  STABLE         compared in full;
+//                  STABLE_MASKED  compared only in the bits of its mask, the
+//                                 other bits having self-clearing, write-only
+//                                 or hardware-updated behaviour;
+//                  VOLATILE       the servo may change the value on its own,
+//                                 so it is never compared. This means "changes
+//                                 behind the scenes", not "lost at power-off".
+//                A register absent from the table (read-only registers, gaps,
+//                addresses beyond the map) is treated as VOLATILE and is never
+//                compared. A multi-register span applies each byte's own
+//                classification.
+//      Table     (address, bytes, register: class)
+//                0x05 1 DEVICE_ID           STABLE
+//                0x06 1 BAUD_RATE           VOLATILE (the link rate may change
+//                                           at once, so the read-back may not
+//                                           be reachable)
+//                0x07 1 RESPONSE_DELAY      STABLE
+//                0x08 1 RESPONSE_MODE       STABLE
+//                0x09 2 MIN_ANGLE_THRESH    STABLE
+//                0x0B 2 MAX_ANGLE_THRESH    STABLE
+//                0x0D 1 OVERTEMP_THRESH     STABLE
+//                0x0E 1 OVERVOLT_THRESH     STABLE
+//                0x0F 1 UNDERVOLT_THRESH    STABLE
+//                0x10 2 CONTROL_TORQUE_NV   STABLE
+//                0x12 1 PHASE               STABLE_MASKED, PHASE_VERIFY_MASK
+//                0x13 1 UNLOAD_ALARM_MASK   STABLE
+//                0x14 1 LED_ALARM_MASK      STABLE
+//                0x15 1 POS_COEF_P          STABLE
+//                0x16 1 POS_COEF_D          STABLE
+//                0x17 1 POS_COEF_I          STABLE
+//                0x18 2 START_TORQUE        STABLE
+//                0x1A 1 CW_DEADZONE         STABLE
+//                0x1B 1 CCW_DEADZONE        STABLE
+//                0x1C 2 OVERCURR_THRESH     STABLE
+//                0x1E 1 ANGLE_RESOLUTION    STABLE
+//                0x1F 2 POS_OFFSET          STABLE
+//                0x21 1 OPERATION_MODE      STABLE
+//                0x22 1 UNLOAD_CTRL_TORQUE  STABLE
+//                0x23 1 OVERLOAD_TIME       STABLE
+//                0x24 1 OVERLOAD_THRESH     STABLE
+//                0x25 1 SPEED_COEF_P        STABLE
+//                0x26 1 OVERCURR_TIME       STABLE
+//                0x27 1 SPEED_COEF_I        STABLE
+//                0x28 1 SERVO_EN            VOLATILE (a protection trip can
+//                                           clear it, and the calibration value
+//                                           128 is a command that may read back
+//                                           differently; torque-enable writes
+//                                           are never read back)
+//                0x29 1 CTRL_ACCEL          VOLATILE
+//                0x2A 2 CTRL_POS            VOLATILE
+//                0x2C 2 CTRL_PWM            VOLATILE
+//                0x2E 2 CTRL_SPEED          VOLATILE
+//                0x30 2 CTRL_TORQUE         VOLATILE
+//                0x37 1 EEPROM_LOCK         STABLE
+//
 //    Typed helpers (set_*/get_*):
 //      Target    The servo whose ID is device_id(). A broadcast or invalid ID
 //                makes every helper that uses the bus return PARAM.
 //      Ranges    Only hardware ranges are enforced. An out-of-range argument
 //                returns OUT_OF_RANGE and sends nothing.
 //      Units     Native register units, stated per helper.
-//      Writes    Every setter performs exactly one plain register write and
-//                returns its Result. No setter reads first, compares, or
-//                touches REG_EEPROM_LOCK. The one exception is
+//      Writes    Every setter performs exactly one register write (plus the
+//                verification read when enabled) and returns its Result. No setter reads before it writes
+//                or touches REG_EEPROM_LOCK; with write verification enabled,
+//                the write is followed by a single read-back and compare. The one exception is
 //                set_multiturn_feedback(), which reads REG_PHASE first because
 //                only one bit of that byte may change.
 //      EEPROM    Whether a configuration write survives a power cycle is
@@ -82,6 +157,29 @@ class STSServo : public Servo {
   static constexpr uint8_t MAX_OVERLOAD_LIMIT = 100;      ///< Overload threshold, percent of maximum torque.
   static constexpr uint8_t ALARM_MASK_BITS = 0x3F;        ///< Defined sts_err_code_t bits (0..5).
   static constexpr uint8_t PHASE_MULTITURN_BIT = 1 << 4;  ///< REG_PHASE bit enabling multi-turn feedback.
+  /** REG_PHASE bits compared by write verification: every bit except bit 3
+   *  (direction) and bit 6 (speed mode). The register map does not document
+   *  the bit meanings; the excluded bits are those community documentation
+   *  assigns to behaviour the servo may rewrite, unverified on hardware. */
+  static constexpr uint8_t PHASE_VERIFY_MASK = 0xFF & ~((1 << 3) | (1 << 6));
+
+  /** How write verification treats a register byte. */
+  enum class VerifyClass : uint8_t {
+    STABLE,         ///< Compared in full.
+    STABLE_MASKED,  ///< Compared in the bits of VerifyRule::mask only.
+    VOLATILE        ///< Never compared (also: absent from the table).
+  };
+  /** Compare rule of one register byte. */
+  struct VerifyRule {
+    VerifyClass kind;  ///< Classification.
+    uint8_t mask;      ///< Bits compared: 0xFF STABLE, a subset STABLE_MASKED, 0 VOLATILE.
+  };
+  /** Write verification rule of the register byte at @p addr, from the table in
+   *  the file header. Pure; touches no bus. A byte absent from the table (any
+   *  read-only register, a gap, an address of 256 or more) is VOLATILE with
+   *  mask 0, so it is never compared. Every byte of a multi-byte register has
+   *  the register's classification. */
+  static VerifyRule verify_rule(uint16_t addr);
 
   /** Highest register address plus one: the control table is addressed by one byte. */
   static constexpr size_t REGISTER_SPACE = 256;
@@ -122,7 +220,10 @@ class STSServo : public Servo {
 
   /** Writes @p len bytes to register @p addr of servo @p id. Same limits as
    *  read_register(). Registers are written as given, without EEPROM-lock
-   *  handling. */
+   *  handling. With verify_writes() on, a successful write is followed by one
+   *  read of the span, compared per verify_rule(); returns VERIFY_FAILED on a
+   *  difference or the read's own error. See "Write verification" in the file
+   *  header. */
   Result write_register(uint8_t id, uint16_t addr, const uint8_t* data, size_t len);
 
   /** Reads one byte register. @param[out] out Written on OK only. */
@@ -230,6 +331,10 @@ class STSServo : public Servo {
   Result set_verify_checksum(bool enable) override;
   bool verify_checksum() const override;
   uint32_t checksum_errors() const override;
+  /** Turns write verification on or off; see "Write verification" in the file
+   *  header. Touches no bus. Always OK. */
+  Result set_verify_writes(bool enable) override;
+  bool verify_writes() const override { return m_verify_writes; }
 
   // --- Generic Servo implementation (see sts_servo_generic.cpp) ---
   // Built on the register helpers above. Angles use 4096 steps per revolution
@@ -326,6 +431,7 @@ class STSServo : public Servo {
   ServoController* m_ctl;
   uint8_t m_id;
   uint8_t m_last_status = 0;
+  bool m_verify_writes = false;
   HoldStep m_hold_step = HoldStep::NONE;
 };
 

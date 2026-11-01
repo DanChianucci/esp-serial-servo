@@ -144,6 +144,19 @@ class Servo {
 
   /** Count of responses with a bad checksum seen; 0 if unsupported. */
   virtual uint32_t checksum_errors() const { return 0; }
+
+  /** Enables/disables write verification (default off). When on, each register
+   *  write is followed by one read of the written bytes, compared against what
+   *  was written; a difference returns Result::VERIFY_FAILED. Registers whose
+   *  value the servo may change on its own are not compared.
+   *  @return OK, or UNSUPPORTED (the default; see Feature::VERIFY_WRITES). */
+  virtual Result set_verify_writes(bool enable) {
+    (void)enable;
+    return Result::UNSUPPORTED;
+  }
+
+  /** Current write verification setting; false if unsupported. */
+  virtual bool verify_writes() const { return false; }
 };
 }  // namespace servokit
 

@@ -155,7 +155,7 @@ static void test_capabilities() {
                     Feature::READ_CURRENT, Feature::READ_LOAD, Feature::READ_VOLTAGE, Feature::READ_TEMPERATURE,
                     Feature::READ_MOVING, Feature::READ_ALARMS, Feature::PROTECT_CURRENT, Feature::PROTECT_TEMP,
                     Feature::PROTECT_RELEASE_ON_ALARM, Feature::PING, Feature::READ_IDENTITY,
-                    Feature::RAW_REGISTERS, Feature::PERSIST_CONFIG}) {
+                    Feature::RAW_REGISTERS, Feature::PERSIST_CONFIG, Feature::VERIFY_WRITES}) {
     CHECK(c.features.has(f));
   }
   // Unverified or not offered through the generic API.

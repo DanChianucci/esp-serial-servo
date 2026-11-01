@@ -37,7 +37,8 @@ enum class Result : uint8_t {
   UNSUPPORTED,   ///< The servo/family does not provide this operation.
   OUT_OF_RANGE,  ///< Argument outside the servo's domain/limits.
   PARAM,         ///< Invalid argument (null, bad length, bad value).
-  BUS            ///< Transport failure (UART/driver), not a servo fault.
+  BUS,           ///< Transport failure (UART/driver), not a servo fault.
+  VERIFY_FAILED  ///< A verified write read back different from the bytes written.
 };
 
 /** Generic fault bits reported by a servo. Family drivers translate their
@@ -196,7 +197,9 @@ enum class Feature : uint64_t {
   // Behaviour
   RETAINS_POSITION_UNPOWERED = 1ull << 38,
   // Configuration storage
-  PERSIST_CONFIG = 1ull << 39  ///< set_persist() controls whether configuration writes survive power loss
+  PERSIST_CONFIG = 1ull << 39,  ///< set_persist() controls whether configuration writes survive power loss
+  // Write checking
+  VERIFY_WRITES = 1ull << 40  ///< set_verify_writes() makes writes read back and compare
 };
 
 /** Bitmask of Feature values. */
