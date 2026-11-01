@@ -258,7 +258,7 @@ value). The destructor is virtual. The Servo does not own the bus.
 | `set_protect_current(ma, time_ms)` | Current protection (`PROTECT_CURRENT`): threshold in mA and time above it in ms. |
 | `set_protect_overload(permille, time_ms)` | Overload protection (`PROTECT_OVERLOAD`): load threshold in permille and time above it in ms. |
 | `set_protect_temperature(c)` | Temperature trip threshold in degrees C (`PROTECT_TEMP`). |
-| `set_protect_voltage(min_mv, max_mv)` | Supply voltage window in mV (`PROTECT_VOLTAGE`); `min_mv` above `max_mv` is `OUT_OF_RANGE`. |
+| `set_protect_voltage(min_mv, max_mv)` | Supply voltage range in mV (`PROTECT_VOLTAGE`); `min_mv` above `max_mv` is `OUT_OF_RANGE`. |
 | `set_protect_release_alarms(AlarmSet)` | Alarms that make the servo release torque (`PROTECT_RELEASE_ON_ALARM`). An alarm the servo has no setting for is `OUT_OF_RANGE`. |
 | `set_speed(mdeg_s)`, `set_acceleration(mdeg_s2)` | Speed and acceleration for following moves (`SET_SPEED`, `SET_ACCEL`). |
 | `set_torque_limit(permille)`, `set_start_torque(permille)` | Torque limit and starting torque (`TORQUE_LIMIT`, `START_TORQUE`). |
@@ -880,7 +880,7 @@ register map or vendor documentation.
    operations.
 4. `set_protect_*()` and the typed protection setters: the units and the
    meaning of the thresholds on a given servo revision, including the overload
-   percent and the voltage window.
+   percent and the voltage range.
 5. `read_telemetry()`: the load encoding (bit 10 sign, 0..1000), the current
    encoding (bit 15 sign, 6.5 mA) and that position is single-turn. The same
    encodings in `sts_units.h` (position bit 15 sign, load bit 10 sign, current

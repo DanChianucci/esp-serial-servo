@@ -29,7 +29,7 @@ The following are implemented from the register map and vendor documentation, an
 1. EEPROM lock semantics: with the lock off, writes are stored; with the lock on, writes are volatile across a power cycle.
 2. Readback mask for `REG_PHASE`: bits 3 and 6 are excluded from the readback check based on community documentation.
 3. Position mode (`OP_SERVO`) as the operating mode for the generic operations.
-4. Protection setters: units and threshold meanings, including overload percent and voltage window, on each servo revision.
+4. Protection setters: units and threshold meanings, including overload percent and voltage range, on each servo revision.
 5. Telemetry decoding: load and current sign and magnitude encodings, and single-turn position.
 6. `MULTI_TURN_POS` and `RETAINS_POSITION_UNPOWERED` are not declared because they are unverified.
 7. ESP-IDF port timeouts: every blocking method returns by its deadline, tick conversion against the configured tick rate, and `uart_write_bytes()` hand-off time. The host tests do not build or run `lib/platform/esp_idf.cpp`.
