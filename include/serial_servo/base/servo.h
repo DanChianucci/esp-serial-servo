@@ -33,7 +33,7 @@
 
 #include "serial_servo/base/servo_types.h"
 
-namespace esp_serial_servo {
+namespace serial_servo {
 class Servo {
  public:
   virtual ~Servo() = default;
@@ -135,6 +135,6 @@ class Servo {
   /** Count of responses with a bad checksum seen; 0 if unsupported. */
   virtual uint32_t checksum_errors() const { return 0; }
 };
-}  // namespace esp_serial_servo
+}  // namespace serial_servo
 
 #endif  // SERVO__H

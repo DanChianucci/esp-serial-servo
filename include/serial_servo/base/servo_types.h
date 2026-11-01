@@ -27,7 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace esp_serial_servo {
+namespace serial_servo {
 
 /** Result of a generic Servo operation. No exceptions are thrown. */
 enum class Result : uint8_t {
@@ -311,6 +311,6 @@ struct Profile {
   uint16_t start_torque_permille = 0;  ///< Start torque; ignored without START_TORQUE
 };
 
-}  // namespace esp_serial_servo
+}  // namespace serial_servo
 
 #endif  // SERVO_TYPES__H
