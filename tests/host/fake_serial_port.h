@@ -36,6 +36,14 @@ class FakeSerialPort : public servokit::SerialPort {
   void add_stale_rx(const Bytes& bytes) { m_rx.insert(m_rx.end(), bytes.begin(), bytes.end()); }
   void fail_next_write() { m_fail_write = true; }
   void fail_next_read() { m_fail_read = true; }
+  // Drops the frame log, scripted replies, buffered RX and pending failure flags.
+  void clear() {
+    m_tx.clear();
+    m_replies.clear();
+    m_rx.clear();
+    m_fail_write = false;
+    m_fail_read = false;
+  }
 
   // --- inspection ---
   const std::vector<Bytes>& tx_log() const { return m_tx; }

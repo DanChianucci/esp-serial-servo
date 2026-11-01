@@ -20,7 +20,7 @@ STSServo::STSServo(std::unique_ptr<ServoController> controller, uint8_t id)
     : m_owned(std::move(controller)), m_ctl(m_owned.get()), m_id(id) {}
 
 Result STSServo::transact(uint8_t id, uint8_t instruction, const uint8_t* params, size_t param_len, uint8_t* out,
-                          size_t out_len) {
+                          size_t out_len, bool tolerate_status) {
   m_last_status = 0;
   if (m_ctl == nullptr || id >= STS::BROADCAST_ID) return Result::PARAM;
 
@@ -38,7 +38,7 @@ Result STSServo::transact(uint8_t id, uint8_t instruction, const uint8_t* params
   // The ID is compared again so a reply from another servo is never accepted.
   if (rsp.packet_device_id() != id) return Result::BAD_RESPONSE;
   m_last_status = rsp.get_code();
-  if (m_last_status != STS::STAT_OK) return Result::BAD_RESPONSE;
+  if (m_last_status != STS::STAT_OK && !tolerate_status) return Result::BAD_RESPONSE;
   if (rsp.get_length() != out_len + STS::NUM_CODE_BYTES + STS::NUM_CHKSUM_BYTES) return Result::BAD_RESPONSE;
 
   if (out_len > 0) {
@@ -58,6 +58,16 @@ Result STSServo::read_register(uint8_t id, uint16_t addr, uint8_t* data, size_t 
   // Read into a scratch copy so the caller's buffer is untouched on failure.
   uint8_t tmp[MAX_SPAN];
   const Result r = transact(id, STS::CMD_READ, params, sizeof(params), tmp, len);
+  if (r == Result::OK) std::copy(tmp, tmp + len, data);
+  return r;
+}
+
+Result STSServo::read_with_status(uint16_t addr, uint8_t* data, size_t len) {
+  if (data == nullptr || len == 0) return Result::PARAM;
+  if (len > MAX_SPAN || addr + len > REGISTER_SPACE) return Result::OUT_OF_RANGE;
+  const uint8_t params[2] = {static_cast<uint8_t>(addr), static_cast<uint8_t>(len)};
+  uint8_t tmp[MAX_SPAN];
+  const Result r = transact(m_id, STS::CMD_READ, params, sizeof(params), tmp, len, true);
   if (r == Result::OK) std::copy(tmp, tmp + len, data);
   return r;
 }
@@ -102,10 +112,6 @@ Result STSServo::set_verify_checksum(bool enable) {
 bool STSServo::verify_checksum() const { return m_ctl == nullptr ? true : m_ctl->verify_checksum(); }
 uint32_t STSServo::checksum_errors() const { return m_ctl == nullptr ? 0 : m_ctl->checksum_errors(); }
 
-// Generic-API stubs until the family implements them.
-Result STSServo::move_to(int32_t) { return Result::UNSUPPORTED; }
 Result STSServo::set_persist(bool persist) { return persist ? unlock_eeprom() : lock_eeprom(); }
-
-Capabilities STSServo::capabilities() const { return Capabilities{}; }
 
 }  // namespace servokit

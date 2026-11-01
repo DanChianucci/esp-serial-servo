@@ -36,7 +36,8 @@ add_executable(test_sts_servo
   ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/serial/servo_packet.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/stseries_packet.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo_family.cpp)
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo_family.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo_generic.cpp)
 target_include_directories(test_sts_servo PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/../../include)
@@ -49,9 +50,24 @@ add_executable(test_sts_family
   ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/serial/servo_packet.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/stseries_packet.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo_family.cpp)
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo_family.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo_generic.cpp)
 target_include_directories(test_sts_family PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/../../include)
 target_compile_options(test_sts_family PRIVATE -Wall -Wextra)
 add_test(NAME test_sts_family COMMAND test_sts_family)
+
+add_executable(test_sts_generic
+  test_sts_generic.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/serial/servo_controller.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/serial/servo_packet.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/stseries_packet.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo_family.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo_generic.cpp)
+target_include_directories(test_sts_generic PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../include)
+target_compile_options(test_sts_generic PRIVATE -Wall -Wextra)
+add_test(NAME test_sts_generic COMMAND test_sts_generic)
