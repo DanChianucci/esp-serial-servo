@@ -57,11 +57,11 @@ class Servo {
     return Result::UNSUPPORTED;
   }
 
-  /** Puts the servo in absolute-target mode over the full domain. Reads first
-   *  and writes only on difference (EEPROM wear). */
+  /** Puts the servo in absolute-target mode over the full domain. Writes the
+   *  mode registers as given. */
   virtual Result prepare() { return Result::UNSUPPORTED; }
 
-  /** Programs servo-side protection (read-compare-write).
+  /** Programs servo-side protection.
    *  @param protection Thresholds; unsupported fields are ignored. */
   virtual Result set_protection(const Protection& protection) {
     (void)protection;
@@ -81,6 +81,16 @@ class Servo {
   /** Enables or disables motor torque. */
   virtual Result set_torque(bool enable) {
     (void)enable;
+    return Result::UNSUPPORTED;
+  }
+
+  /** Selects whether configuration writes survive power loss.
+   *  true: configuration writes made afterwards are kept across a power cycle.
+   *  false: they take effect but are not kept across a power cycle.
+   *  Applies to every configuration write until changed again; the library
+   *  holds no state for it. Default: UNSUPPORTED (see Feature::PERSIST_CONFIG). */
+  virtual Result set_persist(bool persist) {
+    (void)persist;
     return Result::UNSUPPORTED;
   }
 

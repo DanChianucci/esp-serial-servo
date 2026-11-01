@@ -102,8 +102,10 @@ Result STSServo::set_verify_checksum(bool enable) {
 bool STSServo::verify_checksum() const { return m_ctl == nullptr ? true : m_ctl->verify_checksum(); }
 uint32_t STSServo::checksum_errors() const { return m_ctl == nullptr ? 0 : m_ctl->checksum_errors(); }
 
-// Placeholders: the family API provides the real implementations.
+// Generic-API stubs until the family implements them.
 Result STSServo::move_to(int32_t) { return Result::UNSUPPORTED; }
+Result STSServo::set_persist(bool persist) { return persist ? unlock_eeprom() : lock_eeprom(); }
+
 Capabilities STSServo::capabilities() const { return Capabilities{}; }
 
 }  // namespace servokit

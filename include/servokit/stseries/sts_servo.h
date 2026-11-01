@@ -36,21 +36,18 @@
 //      Ranges    Only hardware ranges are enforced. An out-of-range argument
 //                returns OUT_OF_RANGE and sends nothing.
 //      Units     Native register units, stated per helper.
-//      EEPROM    Registers in the EEPROM region are written like any other
-//                register, by read-compare-write: nothing is sent when the
-//                register already holds the requested value. Whether a value
-//                survives a power cycle is decided by REG_EEPROM_LOCK: with the
-//                lock off (0) it is stored, with the lock on (1) it takes
-//                effect but is lost at power-off. Helpers never change the
-//                lock unless called with persist = true, which unlocks, writes
-//                and locks again, attempting the lock on every exit path.
-//                Without persist the lock is not touched, so persistence
-//                follows whatever the lock currently is. EEPROM helpers return
-//                EepromResult, which names the step that failed. Nothing in
-//                this class writes EEPROM implicitly.
-//      Compare   The compare is against the live register value, so a value
-//                written while the lock was on is not re-stored by a later
-//                persist call that requests the same value.
+//      Writes    Every setter performs exactly one plain register write and
+//                returns its Result. No setter reads first, compares, or
+//                touches REG_EEPROM_LOCK. The one exception is
+//                set_multiturn_feedback(), which reads REG_PHASE first because
+//                only one bit of that byte may change.
+//      EEPROM    Whether a configuration write survives a power cycle is
+//                decided by REG_EEPROM_LOCK: with the lock off (0) it is
+//                stored; with the lock on (1) it takes effect but is not saved
+//                across a power cycle (per the register map; not verified on
+//                hardware). The caller sequences unlock_eeprom(), the writes,
+//                then lock_eeprom(); nothing relocks automatically. A failed
+//                write leaves the lock as it was.
 //      Raw       The raw register calls above stay independent of these
 //                helpers; no register value is cached between calls.
 //------------------------------------------------------------------------
@@ -68,25 +65,6 @@
 #include "servokit/stseries/stseries_defines.h"
 
 namespace servokit {
-
-/** Step of an EEPROM-region update that failed. */
-enum class EepromStep : uint8_t {
-  NONE = 0,  ///< No step failed.
-  READ,      ///< Reading the current value (the read-compare).
-  UNLOCK,    ///< Writing REG_EEPROM_LOCK to unlock (persist only).
-  WRITE,     ///< Writing the new value.
-  RELOCK     ///< Writing REG_EEPROM_LOCK to lock again (persist only).
-};
-
-/** Outcome of an EEPROM-region helper. */
-struct EepromResult {
-  Result result = Result::OK;                 ///< First failure, or OK.
-  EepromStep failed_step = EepromStep::NONE;  ///< Step that produced @c result.
-  bool wrote = false;                         ///< The value write was acknowledged (false when skipped as identical).
-  bool relock_failed = false;                 ///< Persist only: the lock could not be restored after an earlier
-                                              ///< failure; the servo may be left unlocked.
-  bool ok() const { return result == Result::OK; }
-};
 
 class STSServo : public Servo {
  public:
@@ -142,8 +120,8 @@ class STSServo : public Servo {
   Result read_register(uint8_t id, uint16_t addr, uint8_t* data, size_t len);
 
   /** Writes @p len bytes to register @p addr of servo @p id. Same limits as
-   *  read_register(). Registers are written as given: no EEPROM-lock handling
-   *  and no read-compare. */
+   *  read_register(). Registers are written as given, without EEPROM-lock
+   *  handling. */
   Result write_register(uint8_t id, uint16_t addr, const uint8_t* data, size_t len);
 
   /** Reads one byte register. @param[out] out Written on OK only. */
@@ -156,25 +134,25 @@ class STSServo : public Servo {
   Result write_u16(uint8_t id, uint16_t addr, uint16_t value);
 
   // --- Typed helpers (see "Typed helpers" in the file header) ---
-  // Every EEPROM-region setter takes @p persist (default false): see the
-  // EEPROM paragraph of the file header.
+  // Setters for EEPROM-region registers write them like any other register;
+  // see the EEPROM paragraph of the file header for the lock.
 
   /** Reads REG_OPERATION_MODE. @param[out] mode Written on OK only.
    *  @return BAD_RESPONSE if the servo reports a value that is not a mode. */
   Result get_operating_mode(STS::op_mode_t* mode);
   /** Sets REG_OPERATION_MODE. @param mode OP_SERVO..OP_STEP; anything else is
    *  OUT_OF_RANGE. The mode decides how the REG_CTRL_* registers are read. */
-  EepromResult set_operating_mode(STS::op_mode_t mode, bool persist = false);
+  Result set_operating_mode(STS::op_mode_t mode);
 
   /** Reads REG_RESPONSE_MODE. @param[out] mode Written on OK only. */
   Result get_response_mode(STS::rsp_mode_t* mode);
   /** Sets REG_RESPONSE_MODE. With RSP_READ_PING the servo stops answering
    *  writes, so later write calls return TIMEOUT. */
-  EepromResult set_response_mode(STS::rsp_mode_t mode, bool persist = false);
+  Result set_response_mode(STS::rsp_mode_t mode);
   /** Reads REG_RESPONSE_DELAY. @param[out] delay_2us Units of 2 us. */
   Result get_response_delay(uint8_t* delay_2us);
   /** Sets REG_RESPONSE_DELAY. @param delay_2us 0..MAX_RESPONSE_DELAY, units of 2 us. */
-  EepromResult set_response_delay(uint8_t delay_2us, bool persist = false);
+  Result set_response_delay(uint8_t delay_2us);
 
   /** Reads REG_SERVO_EN. @param[out] enabled true when torque output is on. */
   Result get_servo_enabled(bool* enabled);
@@ -196,7 +174,7 @@ class STSServo : public Servo {
   Result set_torque_limit(uint16_t torque);
   /** Writes REG_START_TORQUE, the minimum starting torque.
    *  @param torque 0..MAX_TORQUE, units of 0.1 %. */
-  EepromResult set_start_torque(uint16_t torque, bool persist = false);
+  Result set_start_torque(uint16_t torque);
 
   /** Writes REG_CTRL_POS (SRAM) as sign-magnitude (bit 15 = negative).
    *  @param steps -MAX_TARGET_POSITION..MAX_TARGET_POSITION, 4096 steps per
@@ -207,43 +185,47 @@ class STSServo : public Servo {
   Result get_eeprom_locked(bool* locked);
   /** Writes REG_EEPROM_LOCK = 0 so EEPROM-region writes are stored. */
   Result unlock_eeprom();
-  /** Writes REG_EEPROM_LOCK = 1 so EEPROM-region writes are volatile. */
+  /** Writes REG_EEPROM_LOCK = 1: EEPROM-region writes take effect but are not
+   *  saved across a power cycle. */
   Result lock_eeprom();
 
   /** Reads the REG_PHASE multi-turn feedback bit. @param[out] enabled Written on OK only. */
   Result get_multiturn_feedback(bool* enabled);
   /** Sets or clears only the multi-turn feedback bit of REG_PHASE; the other
-   *  bits are preserved. */
-  EepromResult set_multiturn_feedback(bool enabled, bool persist = false);
+   *  bits are preserved. Reads REG_PHASE, then writes the modified byte (two
+   *  frames); a failed read sends no write. */
+  Result set_multiturn_feedback(bool enabled);
 
   // Protection setters. Thresholds and times are in native register units;
   // their meaning on a given servo revision is not verified here.
   /** REG_OVERTEMP_THRESH, 0..MAX_TEMPERATURE_LIMIT degC. */
-  EepromResult set_overtemp_threshold(uint8_t celsius, bool persist = false);
+  Result set_overtemp_threshold(uint8_t celsius);
   /** REG_OVERVOLT_THRESH, 0..MAX_VOLTAGE_LIMIT, units of 0.1 V. */
-  EepromResult set_overvoltage_threshold(uint8_t decivolts, bool persist = false);
+  Result set_overvoltage_threshold(uint8_t decivolts);
   /** REG_UNDERVOLT_THRESH, 0..MAX_VOLTAGE_LIMIT, units of 0.1 V. */
-  EepromResult set_undervoltage_threshold(uint8_t decivolts, bool persist = false);
+  Result set_undervoltage_threshold(uint8_t decivolts);
   /** REG_OVERCURR_THRESH (16-bit), 0..MAX_CURRENT_LIMIT, units of 6.5 mA. */
-  EepromResult set_overcurrent_threshold(uint16_t units, bool persist = false);
+  Result set_overcurrent_threshold(uint16_t units);
   /** REG_OVERCURR_TIME, 0..MAX_PROTECTION_TIME, units of 10 ms. */
-  EepromResult set_overcurrent_time(uint8_t units_10ms, bool persist = false);
+  Result set_overcurrent_time(uint8_t units_10ms);
   /** REG_OVERLOAD_THRESH, 0..MAX_OVERLOAD_LIMIT percent of maximum torque. */
-  EepromResult set_overload_threshold(uint8_t percent, bool persist = false);
+  Result set_overload_threshold(uint8_t percent);
   /** REG_OVERLOAD_TIME, 0..MAX_PROTECTION_TIME, units of 10 ms. */
-  EepromResult set_overload_time(uint8_t units_10ms, bool persist = false);
+  Result set_overload_time(uint8_t units_10ms);
   /** REG_LED_ALARM_MASK: bitmask of sts_err_code_t whose fault flashes the
    *  LED. Bits above ALARM_MASK_BITS return OUT_OF_RANGE. */
-  EepromResult set_led_alarm_mask(uint8_t mask, bool persist = false);
+  Result set_led_alarm_mask(uint8_t mask);
   /** REG_UNLOAD_ALARM_MASK: bitmask of sts_err_code_t whose fault releases
    *  torque. Bits above ALARM_MASK_BITS return OUT_OF_RANGE. */
-  EepromResult set_unload_alarm_mask(uint8_t mask, bool persist = false);
+  Result set_unload_alarm_mask(uint8_t mask);
 
   // --- Servo overrides ---
   using Servo::ping;
   Result ping() override;
   Result read_raw(uint16_t addr, uint8_t* data, size_t len) override;
   Result write_raw(uint16_t addr, const uint8_t* data, size_t len) override;
+  /** true calls unlock_eeprom(), false calls lock_eeprom(). Keeps no state. */
+  Result set_persist(bool persist) override;
   Result set_verify_checksum(bool enable) override;
   bool verify_checksum() const override;
   uint32_t checksum_errors() const override;
@@ -253,11 +235,6 @@ class STSServo : public Servo {
   Capabilities capabilities() const override;
 
  private:
-  /** Read-compare-write of @p len (1 or 2) bytes at @p addr. @p mask
-   *  (nullable, 1-byte registers only) selects the bits to change. */
-  EepromResult eeprom_update(uint16_t addr, const uint8_t* value, const uint8_t* mask, size_t len, bool persist);
-  EepromResult eeprom_update_u8(uint16_t addr, uint8_t value, bool persist);
-  EepromResult eeprom_update_u16(uint16_t addr, uint16_t value, bool persist);
   Result read_bool(uint16_t addr, bool* out);
   Result transact(uint8_t id, uint8_t instruction, const uint8_t* params, size_t param_len, uint8_t* out,
                   size_t out_len);
