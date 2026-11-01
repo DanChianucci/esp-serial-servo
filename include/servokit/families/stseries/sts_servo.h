@@ -111,7 +111,7 @@
 //                returns OUT_OF_RANGE and sends nothing.
 //      Units     Native register units, stated per helper.
 //      Writes    Every setter performs exactly one register write (plus the
-//                verification read when enabled) and returns its Result. No setter reads before it writes
+//                readback check when enabled) and returns its Result. No setter reads before it writes
 //                or touches REG_EEPROM_LOCK; with the readback check enabled,
 //                the write is followed by a single read-back and compare. The one exception is
 //                set_multiturn_feedback(), which reads REG_PHASE first because

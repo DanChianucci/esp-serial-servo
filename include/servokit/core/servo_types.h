@@ -249,7 +249,8 @@ constexpr FeatureSet operator|(Feature a, Feature b) { return FeatureSet(a) | Fe
 constexpr AlarmSet operator|(Alarm a, Alarm b) { return AlarmSet(a) | AlarmSet(b); }
 
 /** Numeric limits of a servo. Each value is valid only if the matching
- *  Feature is set; otherwise it is 0. Static per model. */
+ *  Feature is set (otherwise it is 0), except max_torque_mnm, which is
+ *  informational and has no feature. Static per model. */
 struct Limits {
   int32_t angle_min_mdeg = 0;        ///< Lowest commandable angle
   int32_t angle_max_mdeg = 0;        ///< Highest commandable angle
