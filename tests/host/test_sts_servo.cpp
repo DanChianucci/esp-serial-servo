@@ -125,7 +125,7 @@ static void test_timeout_and_checksum() {
     CHECK(s.checksum_errors() == 2);
     // Verification off still rejects a bad length.
     r.port.script_reply(frame(1, 0, {1, 2}, false, 1));
-    CHECK(r.servo.read_register(1, 0x38, b, 2) != Result::OK);
+    CHECK(r.servo.read_register(1, 0x38, b, 2) == Result::TIMEOUT);
   }
 }
 
@@ -142,7 +142,7 @@ static void test_id_and_framing() {
     r.port.script_reply(frame(1, 0, {1, 2}, true, 1));
     CHECK(r.servo.read_register(1, 0x38, b, 2) == Result::TIMEOUT);
   }
-  {  // length field smaller than the bytes sent: frame check fails
+  {  // length field smaller than the bytes sent: checksum fails
     Rig r;
     r.port.script_reply(frame(1, 0, {1, 2}, true, -1));
     CHECK(r.servo.read_register(1, 0x38, b, 2) == Result::BAD_RESPONSE);
