@@ -6,7 +6,7 @@
 //              https://opensource.org/licenses/MIT
 //------------------------------------------------------------------------
 //
-// Filename  :  servo_bus.h
+// Filename  :  serial_port.h
 // Project   :  ESP LX16A Servo
 // Author    :  Dan Chianucci <dan.chianucci@gmail.com>
 // Created   :  September 28 2024
@@ -16,18 +16,18 @@
 //
 //------------------------------------------------------------------------
 
-#ifndef SERVO_BUS__H
-#define SERVO_BUS__H
+#ifndef SERIAL_PORT__H
+#define SERIAL_PORT__H
 
 #include <cstdint>
 #include <span>
 
-#include "serial_servo/base/servo_utils.h"
+#include "servokit/core/servo_utils.h"
 
-namespace esp_serial_servo {
-class ServoBus {
+namespace servokit {
+class SerialPort {
  public:
-  static constexpr char LOG_TAG[] = "ServoBus";
+  static constexpr char LOG_TAG[] = "SerialPort";
 
   /** Enables/Disables the reciever
    *  @param enable True to enable, false to disable
@@ -75,5 +75,5 @@ class ServoBus {
   virtual srv_result_t write_bytes(const buffer_const_t, timeout_duration_t timeout = timeout_duration_t::max())=0;
 
 };
-}  // namespace esp_serial_servo
-#endif  // SERVO_BUS__H
+}  // namespace servokit
+#endif  // SERIAL_PORT__H

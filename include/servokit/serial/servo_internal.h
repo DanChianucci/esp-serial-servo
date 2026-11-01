@@ -1,7 +1,7 @@
 #ifndef SERVO_INTERNAL__H
 #define SERVO_INTERNAL__H
 
-#include "serial_servo/base/servo_utils.h"
+#include "servokit/core/servo_utils.h"
 
 #define SRV_RETURN_IF(cond, val) \
   do {                           \
@@ -25,7 +25,7 @@
     }                                         \
   } while (0)
 
-namespace esp_serial_servo {
+namespace servokit {
 namespace timeout {
 /** Initializes the timeout control to start counting down from the time of the call */
 inline void init_timeout_ctrl(timeout_ctrl_t* ctrl) { *ctrl = std::chrono::steady_clock::now(); }
@@ -51,6 +51,6 @@ inline bool update_timeout(timeout_ctrl_t* ctrl, timeout_duration_t* remaining) 
   #endif
 }
 }  // namespace timeout
-}  // namespace esp_serial_servo
+}  // namespace servokit
 
 #endif //SERVO_INTERNAL__H

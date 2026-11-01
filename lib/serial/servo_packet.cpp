@@ -1,8 +1,8 @@
-#include "serial_servo/base/servo_packet.h"
-#include "serial_servo/base/servo_internal.h"
+#include "servokit/serial/servo_packet.h"
+#include "servokit/serial/servo_internal.h"
 #include <utility>
 
-namespace esp_serial_servo {
+namespace servokit {
 
 ServoPacket::ServoPacket(const buffer_t& buffer) {
   m_buffer = buffer;
@@ -21,4 +21,4 @@ buffer_t ServoPacket::raw_buffer() { return m_buffer; };
 
 buffer_const_t ServoPacket::as_bytes() { return m_buffer.first(m_size); }
 
-}  // namespace esp_serial_servo
+}  // namespace servokit

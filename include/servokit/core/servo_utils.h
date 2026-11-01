@@ -9,7 +9,7 @@
 //TODO Use boost <expected> fopr c++11
 //TODO Use boost <span> for c++11
 
-namespace esp_serial_servo {
+namespace servokit {
 typedef std::span<uint8_t> buffer_t;
 typedef std::span<const uint8_t> buffer_const_t;
 
@@ -33,7 +33,7 @@ constexpr srv_stat_t SRV_WRITE_FAIL = srv_stat_t(-6);
 
 
 
-//Return type of serial_servo functions which may either return a result or a status
+//Return type of servokit functions which may either return a result or a status
 typedef std::expected<int, int> srv_result_t;
 
 
@@ -60,6 +60,6 @@ inline int get_value(srv_result_t result, int default_val = 0) {
 
 
 
-}  // namespace esp_serial_servo
+}  // namespace servokit
 
 #endif  // SERVO_UTILS__H

@@ -1,13 +1,13 @@
-#include "serial_servo/stseries/stseries_packet.h"
+#include "servokit/stseries/stseries_packet.h"
 
 #include <algorithm>
 #include <cassert>
 #include <numeric>
 
-#include "serial_servo/base/servo_controller.h"
-#include "serial_servo/base/servo_internal.h"
+#include "servokit/serial/servo_controller.h"
+#include "servokit/serial/servo_internal.h"
 
-namespace esp_serial_servo {
+namespace servokit {
 
 
 
@@ -164,4 +164,4 @@ srv_stat_t STSeriesPacket::set_word(size_t idx, uint16_t val) {
   return SRV_OK;
 }
 
-}  // namespace esp_serial_servo
+}  // namespace servokit

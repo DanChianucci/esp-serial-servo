@@ -1,12 +1,12 @@
 
-#include "serial_servo/base/servo_controller.h"
-#include "serial_servo/base/servo_utils.h"
-#include "serial_servo/base/servo_internal.h"
+#include "servokit/serial/servo_controller.h"
+#include "servokit/core/servo_utils.h"
+#include "servokit/serial/servo_internal.h"
 
-namespace esp_serial_servo {
+namespace servokit {
 using namespace timeout;
 
-ServoController::ServoController(ServoBus* bus, timeout_duration_t tx_timeout, timeout_duration_t rx_timeout,
+ServoController::ServoController(SerialPort* bus, timeout_duration_t tx_timeout, timeout_duration_t rx_timeout,
                                  bool auto_disable_rx) {
   m_servo_bus = bus;
   m_transmit_timeout = tx_timeout;
@@ -85,4 +85,4 @@ srv_result_t ServoController::command_response(ServoPacket* cmd, ServoPacket* rs
   SRV_RETURN_ON_ERR(send_command(cmd, cmd_timeout));
   return read_response(rsp, rsp_timeout);
 }
-}  // namespace esp_serial_servo
+}  // namespace servokit
