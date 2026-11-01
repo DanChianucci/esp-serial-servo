@@ -1,5 +1,5 @@
 // STSServo typed helpers: register, width, value bytes, range rejection,
-// read-compare-write and the optional persist (unlock/write/relock) sequence.
+// plain single writes, the explicit EEPROM lock and set_persist().
 #include <chrono>
 #include <cstdio>
 
@@ -178,231 +178,160 @@ static void test_eeprom_lock_and_readers() {
   CHECK(r.servo.get_multiturn_feedback(&b) == Result::OK && !b);
 }
 
-// Plain (non-persist) EEPROM-region write: read, compare, one write, lock untouched.
+// EEPROM-region setter: exactly one plain write, no pre-read, lock untouched.
 static void test_eeprom_plain_write() {
   Rig r;
-  r.value({0});  // current mode 0
   r.ack();
-  EepromResult e = r.servo.set_operating_mode(STS::OP_SPEED);
-  CHECK(e.ok() && e.wrote && e.failed_step == EepromStep::NONE);
-  CHECK(r.sent() == 2);
-  CHECK(r.tx(0) == read_cmd(0x21, 1));
-  CHECK(r.tx(1) == write_cmd(0x21, {1}));
+  CHECK(r.servo.set_operating_mode(STS::OP_SPEED) == Result::OK);
+  CHECK(r.sent() == 1 && r.tx(0) == write_cmd(0x21, {1}));
 
-  // Identical value: read only, nothing written, no lock traffic.
-  r.value({1});
-  e = r.servo.set_operating_mode(STS::OP_SPEED);
-  CHECK(e.ok() && !e.wrote);
+  // The same value is written again: no compare is made.
+  r.ack();
+  CHECK(r.servo.set_operating_mode(STS::OP_SPEED) == Result::OK);
+  CHECK(r.sent() == 2 && r.tx(1) == write_cmd(0x21, {1}));
+
+  // Write failure is returned as is; still one frame.
+  r.port.script_timeout();
+  CHECK(r.servo.set_operating_mode(STS::OP_PWM) == Result::TIMEOUT);
   CHECK(r.sent() == 3);
 
-  // Same with persist: skipped without touching the lock.
-  r.value({1});
-  e = r.servo.set_operating_mode(STS::OP_SPEED, true);
-  CHECK(e.ok() && !e.wrote && r.sent() == 4);
-
-  // Read failure: reported as READ, nothing written.
-  r.port.script_timeout();
-  e = r.servo.set_operating_mode(STS::OP_PWM);
-  CHECK(e.result == Result::TIMEOUT && e.failed_step == EepromStep::READ && r.sent() == 5);
-
-  // Write failure: reported as WRITE.
-  r.value({0});
-  r.port.script_timeout();
-  e = r.servo.set_operating_mode(STS::OP_PWM);
-  CHECK(e.result == Result::TIMEOUT && e.failed_step == EepromStep::WRITE && !e.wrote && r.sent() == 7);
+  // Servo error status on the write.
+  r.port.script_reply(reply({}, 0x20));
+  CHECK(r.servo.set_operating_mode(STS::OP_PWM) == Result::BAD_RESPONSE);
+  CHECK(r.sent() == 4);
 
   // Out-of-range enum value: rejected before any traffic.
-  e = r.servo.set_operating_mode(static_cast<STS::op_mode_t>(4));
-  CHECK(e.result == Result::OUT_OF_RANGE && r.sent() == 7);
-  e = r.servo.set_response_mode(static_cast<STS::rsp_mode_t>(2));
-  CHECK(e.result == Result::OUT_OF_RANGE && r.sent() == 7);
-}
-
-// Persist: unlock, write, relock, in that order.
-static void test_eeprom_persist_sequence() {
-  Rig r;
-  r.value({0});  // current
-  r.ack();       // unlock
-  r.ack();       // write
-  r.ack();       // relock
-  EepromResult e = r.servo.set_operating_mode(STS::OP_PWM, true);
-  CHECK(e.ok() && e.wrote && !e.relock_failed);
+  CHECK(r.servo.set_operating_mode(static_cast<STS::op_mode_t>(4)) == Result::OUT_OF_RANGE);
+  CHECK(r.servo.set_response_mode(static_cast<STS::rsp_mode_t>(2)) == Result::OUT_OF_RANGE);
   CHECK(r.sent() == 4);
-  CHECK(r.tx(0) == read_cmd(0x21, 1));
-  CHECK(r.tx(1) == write_cmd(0x37, {0}));
-  CHECK(r.tx(2) == write_cmd(0x21, {2}));
-  CHECK(r.tx(3) == write_cmd(0x37, {1}));
 }
 
-static void test_eeprom_persist_failures() {
-  {  // write fails: relock is still sent, WRITE reported
-    Rig r;
-    r.value({0});
-    r.ack();
-    r.port.script_timeout();
-    r.ack();
-    EepromResult e = r.servo.set_operating_mode(STS::OP_PWM, true);
-    CHECK(e.result == Result::TIMEOUT && e.failed_step == EepromStep::WRITE && !e.wrote && !e.relock_failed);
-    CHECK(r.sent() == 4);
-    CHECK(r.tx(3) == write_cmd(0x37, {1}));
-  }
-  {  // write fails and relock fails too
-    Rig r;
-    r.value({0});
-    r.ack();
-    r.port.script_timeout();
-    r.port.script_timeout();
-    EepromResult e = r.servo.set_operating_mode(STS::OP_PWM, true);
-    CHECK(e.failed_step == EepromStep::WRITE && e.relock_failed && r.sent() == 4);
-  }
-  {  // unlock fails: no value write, relock still attempted
-    Rig r;
-    r.value({0});
-    r.port.script_timeout();
-    r.ack();
-    EepromResult e = r.servo.set_operating_mode(STS::OP_PWM, true);
-    CHECK(e.result == Result::TIMEOUT && e.failed_step == EepromStep::UNLOCK && !e.wrote);
-    CHECK(r.sent() == 3);
-    CHECK(r.tx(1) == write_cmd(0x37, {0}));
-    CHECK(r.tx(2) == write_cmd(0x37, {1}));
-  }
-  {  // only the relock fails
-    Rig r;
-    r.value({0});
-    r.ack();
-    r.ack();
-    r.port.script_timeout();
-    EepromResult e = r.servo.set_operating_mode(STS::OP_PWM, true);
-    CHECK(e.result == Result::TIMEOUT && e.failed_step == EepromStep::RELOCK && e.wrote && !e.relock_failed);
-  }
-  {  // servo error status on the write is a failure too, relock still sent
-    Rig r;
-    r.value({0});
-    r.ack();
-    r.port.script_reply(reply({}, 0x20));
-    r.ack();
-    EepromResult e = r.servo.set_operating_mode(STS::OP_PWM, true);
-    CHECK(e.result == Result::BAD_RESPONSE && e.failed_step == EepromStep::WRITE && r.sent() == 4);
-  }
+// The caller sequences unlock, writes, lock; setters never touch the lock.
+static void test_explicit_lock_sequence() {
+  Rig r;
+  r.ack();
+  r.ack();
+  r.ack();
+  CHECK(r.servo.unlock_eeprom() == Result::OK);
+  CHECK(r.servo.set_operating_mode(STS::OP_PWM) == Result::OK);
+  CHECK(r.servo.lock_eeprom() == Result::OK);
+  CHECK(r.sent() == 3);
+  CHECK(r.tx(0) == write_cmd(0x37, {0}));
+  CHECK(r.tx(1) == write_cmd(0x21, {2}));
+  CHECK(r.tx(2) == write_cmd(0x37, {1}));
+}
+
+// set_persist through the generic Servo interface: plain forward to the lock.
+static void test_set_persist() {
+  Rig r;
+  Servo& generic = r.servo;
+  r.ack();
+  CHECK(generic.set_persist(true) == Result::OK);
+  CHECK(r.sent() == 1 && r.tx(0) == write_cmd(0x37, {0}));
+  r.ack();
+  CHECK(generic.set_persist(false) == Result::OK);
+  CHECK(r.sent() == 2 && r.tx(1) == write_cmd(0x37, {1}));
+  r.port.script_timeout();
+  CHECK(generic.set_persist(true) == Result::TIMEOUT && r.sent() == 3);
+  CHECK(r.servo.set_persist(false) == Result::TIMEOUT && r.sent() == 4);  // nothing scripted
+  CHECK(FeatureSet(Feature::PERSIST_CONFIG).has(Feature::PERSIST_CONFIG));
 }
 
 // One check per EEPROM-region helper: register, width, bytes, boundaries.
 static void test_eeprom_helpers() {
   {
     Rig r;  // response mode 0x08
-    r.value({1});
     r.ack();
-    CHECK(r.servo.set_response_mode(STS::RSP_READ_PING).wrote);
-    CHECK(r.tx(0) == read_cmd(0x08, 1) && r.tx(1) == write_cmd(0x08, {0}));
+    CHECK(r.servo.set_response_mode(STS::RSP_READ_PING) == Result::OK);
+    CHECK(r.sent() == 1 && r.tx(0) == write_cmd(0x08, {0}));
   }
   {
     Rig r;  // response delay 0x07, 0..254
-    r.value({0});
     r.ack();
-    CHECK(r.servo.set_response_delay(254).wrote);
-    CHECK(r.tx(1) == write_cmd(0x07, {254}));
-    CHECK(r.servo.set_response_delay(255).result == Result::OUT_OF_RANGE && r.sent() == 2);
+    CHECK(r.servo.set_response_delay(254) == Result::OK);
+    CHECK(r.sent() == 1 && r.tx(0) == write_cmd(0x07, {254}));
+    CHECK(r.servo.set_response_delay(255) == Result::OUT_OF_RANGE && r.sent() == 1);
   }
   {
     Rig r;  // start torque 0x18, 2 bytes, 0..1000
-    r.value({0x10, 0x00});
     r.ack();
-    CHECK(r.servo.set_start_torque(1000).wrote);
-    CHECK(r.tx(0) == read_cmd(0x18, 2) && r.tx(1) == write_cmd(0x18, {0xE8, 0x03}));
-    CHECK(r.servo.set_start_torque(1001).result == Result::OUT_OF_RANGE && r.sent() == 2);
-    r.value({0xE8, 0x03});  // identical
-    CHECK(!r.servo.set_start_torque(1000).wrote && r.sent() == 3);
+    CHECK(r.servo.set_start_torque(1000) == Result::OK);
+    CHECK(r.sent() == 1 && r.tx(0) == write_cmd(0x18, {0xE8, 0x03}));
+    CHECK(r.servo.set_start_torque(1001) == Result::OUT_OF_RANGE && r.sent() == 1);
   }
   {
     Rig r;  // overtemp 0x0D, 0..100
-    r.value({70});
     r.ack();
-    CHECK(r.servo.set_overtemp_threshold(100).wrote && r.tx(1) == write_cmd(0x0D, {100}));
-    CHECK(r.servo.set_overtemp_threshold(101).result == Result::OUT_OF_RANGE && r.sent() == 2);
+    CHECK(r.servo.set_overtemp_threshold(100) == Result::OK && r.tx(0) == write_cmd(0x0D, {100}));
+    CHECK(r.servo.set_overtemp_threshold(101) == Result::OUT_OF_RANGE && r.sent() == 1);
   }
   {
     Rig r;  // overvoltage 0x0E, undervoltage 0x0F, 0..254
-    r.value({80});
     r.ack();
-    CHECK(r.servo.set_overvoltage_threshold(254).wrote && r.tx(1) == write_cmd(0x0E, {254}));
-    r.value({40});
     r.ack();
-    CHECK(r.servo.set_undervoltage_threshold(0).wrote && r.tx(3) == write_cmd(0x0F, {0}));
-    CHECK(r.servo.set_overvoltage_threshold(255).result == Result::OUT_OF_RANGE);
-    CHECK(r.servo.set_undervoltage_threshold(255).result == Result::OUT_OF_RANGE);
-    CHECK(r.sent() == 4);
+    CHECK(r.servo.set_overvoltage_threshold(254) == Result::OK && r.tx(0) == write_cmd(0x0E, {254}));
+    CHECK(r.servo.set_undervoltage_threshold(0) == Result::OK && r.tx(1) == write_cmd(0x0F, {0}));
+    CHECK(r.servo.set_overvoltage_threshold(255) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_undervoltage_threshold(255) == Result::OUT_OF_RANGE);
+    CHECK(r.sent() == 2);
   }
   {
     Rig r;  // overcurrent threshold 0x1C 2 bytes 0..511, time 0x26 0..254
-    r.value({0xF4, 0x01});
     r.ack();
-    CHECK(r.servo.set_overcurrent_threshold(511).wrote);
-    CHECK(r.tx(r.sent() - 1) == write_cmd(0x1C, {0xFF, 0x01}));
-    const size_t n = r.sent();
-    CHECK(r.servo.set_overcurrent_threshold(512).result == Result::OUT_OF_RANGE && r.sent() == n);
-    r.value({200});
     r.ack();
-    CHECK(r.servo.set_overcurrent_time(254).wrote && r.tx(r.sent() - 1) == write_cmd(0x26, {254}));
-    CHECK(r.servo.set_overcurrent_time(255).result == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_overcurrent_threshold(511) == Result::OK && r.tx(0) == write_cmd(0x1C, {0xFF, 0x01}));
+    CHECK(r.servo.set_overcurrent_threshold(512) == Result::OUT_OF_RANGE && r.sent() == 1);
+    CHECK(r.servo.set_overcurrent_time(254) == Result::OK && r.tx(1) == write_cmd(0x26, {254}));
+    CHECK(r.servo.set_overcurrent_time(255) == Result::OUT_OF_RANGE && r.sent() == 2);
   }
   {
     Rig r;  // overload threshold 0x24 0..100, time 0x23 0..254
-    r.value({80});
     r.ack();
-    CHECK(r.servo.set_overload_threshold(100).wrote && r.tx(1) == write_cmd(0x24, {100}));
-    CHECK(r.servo.set_overload_threshold(101).result == Result::OUT_OF_RANGE);
-    r.value({200});
     r.ack();
-    CHECK(r.servo.set_overload_time(254).wrote && r.tx(3) == write_cmd(0x23, {254}));
-    CHECK(r.servo.set_overload_time(255).result == Result::OUT_OF_RANGE);
-    CHECK(r.sent() == 4);
+    CHECK(r.servo.set_overload_threshold(100) == Result::OK && r.tx(0) == write_cmd(0x24, {100}));
+    CHECK(r.servo.set_overload_threshold(101) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_overload_time(254) == Result::OK && r.tx(1) == write_cmd(0x23, {254}));
+    CHECK(r.servo.set_overload_time(255) == Result::OUT_OF_RANGE);
+    CHECK(r.sent() == 2);
   }
   {
     Rig r;  // alarm masks: LED 0x14, unload 0x13, bits 0..5 only
-    r.value({47});
+    r.ack();
     r.ack();
     const uint8_t mask = STS::STAT_TEMPERATURE | STS::STAT_OVERLOAD;
-    CHECK(r.servo.set_led_alarm_mask(mask).wrote && r.tx(1) == write_cmd(0x14, {0x24}));
-    r.value({44});
-    r.ack();
-    CHECK(r.servo.set_unload_alarm_mask(0x3F).wrote && r.tx(3) == write_cmd(0x13, {0x3F}));
-    CHECK(r.servo.set_led_alarm_mask(0x40).result == Result::OUT_OF_RANGE);
-    CHECK(r.servo.set_unload_alarm_mask(0x80).result == Result::OUT_OF_RANGE);
-    CHECK(r.sent() == 4);
+    CHECK(r.servo.set_led_alarm_mask(mask) == Result::OK && r.tx(0) == write_cmd(0x14, {0x24}));
+    CHECK(r.servo.set_unload_alarm_mask(0x3F) == Result::OK && r.tx(1) == write_cmd(0x13, {0x3F}));
+    CHECK(r.servo.set_led_alarm_mask(0x40) == Result::OUT_OF_RANGE);
+    CHECK(r.servo.set_unload_alarm_mask(0x80) == Result::OUT_OF_RANGE);
+    CHECK(r.sent() == 2);
   }
 }
 
-// REG_PHASE: only bit 4 changes, other bits preserved, identical skipped.
+// REG_PHASE: read the byte, change only bit 4, write it back.
 static void test_multiturn_bit() {
   Rig r;
   r.value({0x0C});
   r.ack();
-  EepromResult e = r.servo.set_multiturn_feedback(true);
-  CHECK(e.ok() && e.wrote);
-  CHECK(r.tx(0) == read_cmd(0x12, 1) && r.tx(1) == write_cmd(0x12, {0x1C}));
+  CHECK(r.servo.set_multiturn_feedback(true) == Result::OK);
+  CHECK(r.sent() == 2 && r.tx(0) == read_cmd(0x12, 1) && r.tx(1) == write_cmd(0x12, {0x1C}));
 
   r.value({0xBC});  // bit 4 set among others
   r.ack();
-  e = r.servo.set_multiturn_feedback(false);
-  CHECK(e.wrote && r.tx(3) == write_cmd(0x12, {0xAC}));
+  CHECK(r.servo.set_multiturn_feedback(false) == Result::OK);
+  CHECK(r.sent() == 4 && r.tx(3) == write_cmd(0x12, {0xAC}));
 
-  r.value({0x1C});  // already set
-  e = r.servo.set_multiturn_feedback(true);
-  CHECK(e.ok() && !e.wrote && r.sent() == 5);
+  r.port.script_timeout();  // read fails: no write follows
+  CHECK(r.servo.set_multiturn_feedback(true) == Result::TIMEOUT && r.sent() == 5);
 
-  r.value({0x0C});  // persist path through the same bit
-  r.ack();
-  r.ack();
-  r.ack();
-  e = r.servo.set_multiturn_feedback(true, true);
-  CHECK(e.ok() && e.wrote && r.sent() == 9);
-  CHECK(r.tx(6) == write_cmd(0x37, {0}) && r.tx(7) == write_cmd(0x12, {0x1C}) && r.tx(8) == write_cmd(0x37, {1}));
+  r.value({0x0C});  // write fails
+  r.port.script_timeout();
+  CHECK(r.servo.set_multiturn_feedback(true) == Result::TIMEOUT && r.sent() == 7);
 }
 
 static void test_no_controller() {
   STSServo s(static_cast<ServoController*>(nullptr), 1);
   CHECK(s.set_target_position(0) == Result::PARAM);
-  CHECK(s.set_operating_mode(STS::OP_SERVO).result == Result::PARAM);
+  CHECK(s.set_operating_mode(STS::OP_SERVO) == Result::PARAM);
 }
 
 int main() {
@@ -410,8 +339,8 @@ int main() {
   test_target_position();
   test_eeprom_lock_and_readers();
   test_eeprom_plain_write();
-  test_eeprom_persist_sequence();
-  test_eeprom_persist_failures();
+  test_explicit_lock_sequence();
+  test_set_persist();
   test_eeprom_helpers();
   test_multiturn_bit();
   test_no_controller();

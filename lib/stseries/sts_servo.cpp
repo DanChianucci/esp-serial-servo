@@ -104,6 +104,8 @@ uint32_t STSServo::checksum_errors() const { return m_ctl == nullptr ? 0 : m_ctl
 
 // Placeholders: the family API provides the real implementations.
 Result STSServo::move_to(int32_t) { return Result::UNSUPPORTED; }
+Result STSServo::set_persist(bool persist) { return persist ? unlock_eeprom() : lock_eeprom(); }
+
 Capabilities STSServo::capabilities() const { return Capabilities{}; }
 
 }  // namespace servokit

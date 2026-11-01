@@ -194,7 +194,9 @@ enum class Feature : uint64_t {
   BROADCAST = 1ull << 36,
   RAW_REGISTERS = 1ull << 37,
   // Behaviour
-  RETAINS_POSITION_UNPOWERED = 1ull << 38
+  RETAINS_POSITION_UNPOWERED = 1ull << 38,
+  // Configuration storage
+  PERSIST_CONFIG = 1ull << 39  ///< set_persist() controls whether configuration writes survive power loss
 };
 
 /** Bitmask of Feature values. */

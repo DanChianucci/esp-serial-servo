@@ -35,7 +35,8 @@ add_executable(test_sts_servo
   ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/serial/servo_controller.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/serial/servo_packet.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/stseries_packet.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo.cpp)
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/stseries/sts_servo_family.cpp)
 target_include_directories(test_sts_servo PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/../../include)

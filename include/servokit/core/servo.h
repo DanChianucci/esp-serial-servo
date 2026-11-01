@@ -84,6 +84,16 @@ class Servo {
     return Result::UNSUPPORTED;
   }
 
+  /** Selects whether configuration writes survive power loss.
+   *  true: configuration writes made afterwards are kept across a power cycle.
+   *  false: they take effect but are not kept across a power cycle.
+   *  Applies to every configuration write until changed again; the library
+   *  holds no state for it. Default: UNSUPPORTED (see Feature::PERSIST_CONFIG). */
+  virtual Result set_persist(bool persist) {
+    (void)persist;
+    return Result::UNSUPPORTED;
+  }
+
   /** Reads one atomic telemetry sample.
    *  @param[out] out Filled on OK only. */
   virtual Result read_telemetry(Telemetry* out) {
