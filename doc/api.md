@@ -4,7 +4,7 @@ Back to the [overview](overview.md).
 
 Everything is in namespace `servokit`. The **Tier** column uses the access
 tiers from the overview: 1 = generic (`Servo&`), 2 = family (`STSServo`),
-3 = raw registers, T = transport/infrastructure.
+3 = register access, T = transport/infrastructure.
 
 Contents:
 [Common contract](#common-contract) |
@@ -15,6 +15,8 @@ Contents:
 [Capabilities and features](#capabilities-and-features) |
 [Value types](#value-types) |
 [Servo](#servo-generic-interface) |
+[RegisterAccess](#registeraccess) |
+[SerialLink](#seriallink) |
 [Write semantics](#write-semantics) |
 [Checksum option](#checksum-option) |
 [STSServo](#stsservo) |
@@ -34,12 +36,12 @@ These rules hold for every bus operation unless an entry says otherwise.
 - **Blocking.** Calls are synchronous. A call returns when the transaction
   finishes or its time budget expires.
 - **Finite time, no retries.** One call is one command/response transaction
-  (plus one read-back when write verification is on). The library never
+  (plus one read-back when the readback check is on). The library never
   retries and never loops waiting for a servo.
 - **Errors.** Returned as a [`Result`](#result); nothing throws.
 - **Thread safety.** Servo objects, controllers, ports and packets are not
   thread-safe, and neither is the bus. Serialize all calls per bus, including
-  the checksum accessors, from one task or under a mutex. Pure value types and
+  calls through `get_registers()` and `get_serial_link()`, from one task or under a mutex. Pure value types and
   the functions in `sts_units.h` are safe from any thread.
 - **Lifetimes.** Pointer and reference arguments are used only during the
   call and never retained. Output values are copies. Output parameters are
@@ -63,7 +65,7 @@ Generic API (`core/servo_types.h`, `core/servo.h`):
 | torque, load | permille (1000 = full scale) |
 | time | milliseconds |
 
-STS native units (`stseries/sts_units.h`, `STSServo`):
+STS native units (`families/stseries/sts_units.h`, `STSServo`):
 
 | Quantity | Native unit |
 |---|---|
@@ -90,12 +92,12 @@ generic angle domain is the same range expressed in mdeg.
 |---|---|
 | `OK` | Completed. Output parameters are valid. |
 | `TIMEOUT` | No complete response within the transaction budget. Also returned for a write to a servo in response mode `RSP_READ_PING` (the servo does not acknowledge writes; the write took effect). |
-| `BAD_RESPONSE` | Framing, checksum, length or device-ID mismatch; the servo reported a non-zero error status (see `STSServo::last_status()`); or a register held a value that is not valid for its type (for example an operating mode above `OP_STEP`). |
+| `BAD_RESPONSE` | Framing, checksum, length or device-ID mismatch; the servo reported a non-zero error status (see `STSServo::get_last_status()`); or a register held a value that is not valid for its type (for example an operating mode above `OP_STEP`). |
 | `UNSUPPORTED` | The servo/family does not provide the operation. Default of every optional `Servo` method. |
 | `OUT_OF_RANGE` | Argument or register span outside the servo's domain or limits. Nothing is sent. |
 | `PARAM` | Invalid argument (null pointer, empty span, broadcast or invalid ID, no controller, caller buffer too small). |
 | `BUS` | Transport failure (read/write failure, driver error), not a servo fault. |
-| `VERIFY_FAILED` | A verified write read back different from the bytes written. The write took effect. |
+| `VERIFY_FAILED` | With the readback check on, a write read back different from the bytes written. The write took effect. |
 
 Mapping from transport status codes (`to_result()`):
 
@@ -118,11 +120,11 @@ layer.
   positive. It defaults to `tx_timeout + rx_timeout` from the constructor
   (saturating); if that sum is not positive it is
   `ServoController::FALLBACK_TRANSACTION_TIMEOUT` (100 ms). Change it with
-  `set_transaction_timeout()`, read it with `transaction_timeout()`.
+  `set_transaction_timeout()`, read it with `get_transaction_timeout()`.
 - The send step is clamped to the budget; the response step gets only the time
   left in the budget, so a slow send shortens the receive window.
 - When the budget is spent the call returns `TIMEOUT`.
-- A transaction that needs a read-back (write verification) or two frames
+- A transaction that needs a read-back (readback check) or two frames
   (`hold()`, `prepare()`, `set_multiturn_feedback()`) takes one budget per
   frame.
 - There are no retries anywhere. To retry, the caller repeats the call a
@@ -188,7 +190,7 @@ performs itself. `FeatureSet` is the bitmask (`bits_t` is `uint64_t`; `from_bits
 
 **Features are never emulated.** A flag is set only if the servo does the
 thing; a method whose feature is absent returns `UNSUPPORTED`. Check
-`capabilities().features` before depending on an optional operation.
+`get_capabilities().features` before depending on an optional operation.
 
 Features: `ABSOLUTE_POSITION`, `MULTI_TURN_POS`, `RELATIVE_POSITION`,
 `CONTINUOUS_ROTATION`, `PWM_DRIVE`, `SET_SPEED`, `SET_ACCEL`, `TORQUE_LIMIT`,
@@ -198,16 +200,17 @@ Features: `ABSOLUTE_POSITION`, `MULTI_TURN_POS`, `RELATIVE_POSITION`,
 `READ_MOVING`, `READ_ALARMS`, `PROTECT_CURRENT`, `PROTECT_OVERLOAD`,
 `PROTECT_TEMP`, `PROTECT_VOLTAGE`, `PROTECT_RELEASE_ON_ALARM`, `PING`,
 `READ_IDENTITY`, `SET_ID`, `SET_BAUD`, `SYNC_WRITE`, `SYNC_READ`,
-`ASYNC_WRITE`, `BROADCAST`, `RAW_REGISTERS`, `RETAINS_POSITION_UNPOWERED`,
-`PERSIST_CONFIG` (`set_persist()` controls persistence), `VERIFY_WRITES`
-(`set_verify_writes()` is available).
+`ASYNC_WRITE`, `BROADCAST`, `REGISTER_ACCESS` (`Servo::get_registers()` is non-null exactly when it is set),
+`RETAINS_POSITION_UNPOWERED`, `PERSIST_CONFIG` (`set_persist()` controls
+persistence), `READBACK_CHECK` (`RegisterAccess::set_readback_check()` is
+available).
 
-`STSServo::capabilities()` declares: `ABSOLUTE_POSITION`, `SET_SPEED`,
+`STSServo::get_capabilities()` declares: `ABSOLUTE_POSITION`, `SET_SPEED`,
 `SET_ACCEL`, `TORQUE_LIMIT`, `START_TORQUE`, `TORQUE_ENABLE`, `HOLD`,
 `READ_POSITION`, `READ_CURRENT`, `READ_LOAD`, `READ_VOLTAGE`,
 `READ_TEMPERATURE`, `READ_MOVING`, `READ_ALARMS`, `PROTECT_CURRENT`,
 `PROTECT_TEMP`, `PROTECT_RELEASE_ON_ALARM`, `PING`, `READ_IDENTITY`,
-`RAW_REGISTERS`, `PERSIST_CONFIG`, `VERIFY_WRITES`. It does not declare
+`REGISTER_ACCESS`, `PERSIST_CONFIG`, `READBACK_CHECK`. It does not declare
 `MULTI_TURN_POS` or `RETAINS_POSITION_UNPOWERED` (unverified on hardware), nor
 any feature without an implementation.
 
@@ -215,7 +218,10 @@ any feature without an implementation.
 if the matching feature is set, otherwise 0. STS values: angle
 -30719..+30719 steps converted to mdeg, `resolution_mdeg` 88 (87.890625
 rounded), maximum speed 3400 steps/s and acceleration 254 units converted to
-mdeg/s and mdeg/s², `max_torque_permille` 1000, current range +-the largest 15-bit current
+mdeg/s and mdeg/s², `max_torque_permille` 1000, `max_torque_mnm` 1912
+(the ST3215 stall torque, 19.5 kgf*cm, rotor locked at a 7.4 V supply per the
+manufacturer datasheet; lower at lower voltages, 16.5 kgf*cm at 6 V;
+informational only, commands stay in permille), current range +-the largest 15-bit current
 feedback in mA (the reportable range; the settable stall threshold is
 narrower), `reportable_alarms` from `reportable_alarms()`.
 
@@ -226,7 +232,7 @@ references; nothing blocks.
 
 | Type | Fields |
 |---|---|
-| `Limits` | `angle_min_mdeg`, `angle_max_mdeg`, `resolution_mdeg`, `max_speed_mdeg_s`, `max_accel_mdeg_s2`, `max_torque_permille`, `current_min_ma`, `current_max_ma`, `reportable_alarms` |
+| `Limits` | `angle_min_mdeg`, `angle_max_mdeg`, `resolution_mdeg`, `max_speed_mdeg_s`, `max_accel_mdeg_s2`, `max_torque_permille`, `max_torque_mnm` (informational, mN*m, 0 = unknown), `current_min_ma`, `current_max_ma`, `reportable_alarms` |
 | `Capabilities` | `features`, `limits` |
 | `Identity` | `family[16]` (NUL-terminated, owned, e.g. `"STS"`), `model_major`, `model_minor`, `firmware_major`, `firmware_minor`, `device_id` |
 | `Telemetry` | `position_mdeg`, `current_ma`, `temperature_c`, `alarms`; optional `load_valid`/`load_permille`, `voltage_valid`/`voltage_mv`, `moving_valid`/`moving` (read an optional field only when its flag is true) |
@@ -235,16 +241,16 @@ references; nothing blocks.
 
 ## Servo (generic interface)
 
-`class Servo` in `core/servo.h`. Tier 1. Only `move_to` and `capabilities`
+`class Servo` in `core/servo.h`. Tier 1. Only `move_to` and `get_capabilities`
 are pure; every other method defaults to `UNSUPPORTED` (or the stated default
 value). The destructor is virtual. The Servo does not own the bus.
 
 | Method | Contract |
 |---|---|
 | `move_to(angle_mdeg)` | Absolute move. `OUT_OF_RANGE` outside the limits' angle domain (nothing sent). |
-| `capabilities()` | Const; does not touch the bus. Static per model; an implementation may make it depend on a prior `read_identity()`. |
-| `ping()` | One transaction, no retries. |
-| `read_identity(Identity*)` | Family, model, firmware, device ID. |
+| `get_capabilities()` | Const; does not touch the bus. Static per model; an implementation may make it depend on a prior `identify()`. |
+| `probe()` | One transaction, no retries. |
+| `identify(Identity*)` | Family, model, firmware, device ID. |
 | `prepare()` | Puts the servo into absolute-target mode over the full domain. |
 | `set_protection(const Protection&)` | Programs servo-side protection thresholds; the servo enforces them itself. |
 | `set_profile(const Profile&)` | Speed, acceleration, torque for following moves; clamped to the limits. |
@@ -254,10 +260,46 @@ value). The destructor is virtual. The Servo does not own the bus.
 | `read_telemetry(Telemetry*)` | One atomic sample, filled on `OK` only. |
 | `read_alarms(AlarmSet*)` | Active alarms. |
 | `clear_alarms()` | Clears latched alarms where supported. |
-| `read_raw(addr, data, len)` | Tier 3. Family-defined address, no conversion; `data` is a caller buffer of at least `len` bytes. |
-| `write_raw(addr, data, len)` | Tier 3. `data` is read during the call only. |
-| `set_verify_checksum(bool)`, `verify_checksum()`, `checksum_errors()` | See [checksum option](#checksum-option). |
-| `set_verify_writes(bool)`, `verify_writes()` | See [write semantics](#write-semantics). Defaults: `UNSUPPORTED`, `false`. |
+| `get_registers()` | Non-owning `RegisterAccess*`, valid for the lifetime of the `Servo`; `nullptr` by default. Non-null exactly when `Feature::REGISTER_ACCESS` is set. See [RegisterAccess](#registeraccess). |
+| `get_serial_link()` | Non-owning `SerialLink*`, valid for the lifetime of the `Servo`; `nullptr` by default (servos not on a checksummed serial link). See [SerialLink](#seriallink). |
+
+No RTTI is used: both interfaces are reached through these accessors only.
+
+## RegisterAccess
+
+`class RegisterAccess` in `core/register_access.h`. Tier 3. Register access to
+the servo's own device; the implementation holds the device ID. Addresses and
+meanings are family-defined, there is no unit conversion, and multi-byte values
+are little endian (low byte at the lower address). Every call is one blocking
+bus transaction bounded by the bus timeouts, with no retries; not thread-safe
+(see the [common contract](#common-contract)). Pointer arguments are used only
+during the call; outputs are written on `OK` only. Errors: `PARAM` for a null
+pointer, empty span or invalid target, `OUT_OF_RANGE` for a span outside the
+table, bus errors as usual.
+
+| Method | Contract |
+|---|---|
+| `read_register(addr, data, len)` | Reads `len` bytes from `addr` into the caller buffer `data` (at least `len` bytes). |
+| `write_register(addr, data, len)` | Writes `len` bytes, as given. `data` is read during the call only. With the readback check on, followed by one verification read. |
+| `read_u8(addr, out)`, `read_u16(addr, out)` | One byte / one little-endian word. |
+| `write_u8(addr, value)`, `write_u16(addr, value)` | One byte / one little-endian word; as `write_register`. |
+| `set_readback_check(bool)` | Turns the readback check on or off (default off); touches no bus. `UNSUPPORTED` if the implementation has none. See [write semantics](#write-semantics). |
+| `get_readback_check()` | Current setting; no bus access. |
+
+## SerialLink
+
+`class SerialLink` in `serial/serial_link.h` (it describes the serial transport,
+so it lives with `serial/`; `core/servo.h` only forward-declares it). Tier T.
+Link-level settings of servos on a checksummed serial bus; no call touches the
+bus. Not thread-safe. The setting belongs to the whole controller behind the
+servo, so servos sharing a controller share it. See
+[checksum option](#checksum-option).
+
+| Method | Contract |
+|---|---|
+| `set_verify_checksum(bool)` | Enables or disables response checksum verification (default on). `PARAM` if the servo has no controller. |
+| `get_verify_checksum()` | Current setting; `true` when there is no controller. |
+| `get_checksum_errors()` | Count of replies with a bad checksum, whether or not verification is on; 0 when there is no controller. |
 
 ## Write semantics
 
@@ -266,8 +308,8 @@ implicit read-compare-write and no hidden read. A caller that wants to avoid
 a write reads first. The only helper that reads before writing is
 `STSServo::set_multiturn_feedback()` (it must preserve the other bits of
 `REG_PHASE`), and `hold()` reads the position it commands. Each typed setter
-performs exactly one register write (plus the read-back when verification is
-on). `set_protection()` and `set_profile()` perform several plain writes in a
+performs exactly one register write (plus the read-back when the readback
+check is on). `set_protection()` and `set_profile()` perform several plain writes in a
 fixed order and stop at the first failure.
 
 **EEPROM persistence is explicit.** Whether a configuration write survives a
@@ -287,24 +329,24 @@ A failed write leaves the lock as it was. `STSServo::set_persist(bool)` calls
 `unlock_eeprom()` for `true` and `lock_eeprom()` for `false` and keeps no
 state. The lock register is read with `get_eeprom_locked()`.
 
-**Write verification** (`set_verify_writes(true)`, off by default). After a
+**Readback check** (`RegisterAccess::set_readback_check(true)`, off by default). After a
 successful `write_register()` of a span, one read of the same span is sent and
 each byte is compared with the byte written through that byte's compare mask.
-This happens in `write_register()`, so `write_u8`, `write_u16`, `write_raw`,
-every typed helper and every generic operation are covered alike.
+This happens in `write_register()`, so `write_u8`, `write_u16`, the
+`RegisterAccess` calls, every typed helper and every generic operation are covered alike.
 
 - The read is addressed to the written ID, except that a write covering
   `REG_DEVICE_ID` reads from the newly written ID; if that ID is above
   `STS::MAX_ID` (0xFC) nothing is read and the write returns `OK`.
 - Exactly one extra read frame per write that has at least one compared byte;
-  none for a span of only volatile or unlisted bytes; none when verification is
-  off.
+  none for a span of only volatile or unlisted bytes; none when the readback
+  check is off.
 - A write error is returned as is and nothing is read. A failed read-back
   returns that read's own error (the write took effect). A difference in a
   compared bit returns `VERIFY_FAILED` (the write took effect and the servo
   holds a different value).
 
-Register classes (`STSServo::verify_rule(addr)`, a pure function; a register
+Register classes (`STSServo::readback_rule(addr)`, a pure function; a register
 absent from the table, such as every read-only register, a gap or an address
 of 256 or more, is `VOLATILE` with mask 0 and is never compared). "Volatile"
 here means the servo may change the value on its own, not "lost at power-off".
@@ -318,7 +360,7 @@ here means the servo may change the value on its own, not "lost at power-off".
 | 0x09, 0x0B | `REG_MIN_ANGLE_THRESH`, `REG_MAX_ANGLE_THRESH` (2 bytes each) | STABLE |
 | 0x0D, 0x0E, 0x0F | `REG_OVERTEMP_THRESH`, `REG_OVERVOLT_THRESH`, `REG_UNDERVOLT_THRESH` | STABLE |
 | 0x10 | `REG_CONTROL_TORQUE_NV` (2) | STABLE |
-| 0x12 | `REG_PHASE` | STABLE_MASKED with `PHASE_VERIFY_MASK` (bits 3 and 6 excluded) |
+| 0x12 | `REG_PHASE` | STABLE_MASKED with `PHASE_READBACK_MASK` (bits 3 and 6 excluded) |
 | 0x13, 0x14 | `REG_UNLOAD_ALARM_MASK`, `REG_LED_ALARM_MASK` | STABLE |
 | 0x15, 0x16, 0x17 | `REG_POS_COEF_P`, `_D`, `_I` | STABLE |
 | 0x18 | `REG_START_TORQUE` (2) | STABLE |
@@ -331,9 +373,9 @@ here means the servo may change the value on its own, not "lost at power-off".
 | 0x29, 0x2A, 0x2C, 0x2E, 0x30 | `REG_CTRL_ACCEL`, `REG_CTRL_POS`, `REG_CTRL_PWM`, `REG_CTRL_SPEED`, `REG_CTRL_TORQUE` | VOLATILE |
 | 0x37 | `REG_EEPROM_LOCK` | STABLE |
 
-`VerifyClass` has the values `STABLE` (compared in full), `STABLE_MASKED`
-(compared in `VerifyRule::mask` only) and `VOLATILE` (never compared).
-`VerifyRule` holds `kind` and `mask` (0xFF, a subset, or 0).
+`ReadbackClass` has the values `STABLE` (compared in full), `STABLE_MASKED`
+(compared in `ReadbackRule::mask` only) and `VOLATILE` (never compared).
+`ReadbackRule` holds `kind` and `mask` (0xFF, a subset, or 0).
 
 ## Checksum option
 
@@ -341,28 +383,31 @@ STS frames end with `~(id + length + instruction/status + params/data)`, low
 byte. Transmitted frames always carry a correct checksum. Verification of
 **received** frames is on by default and can be switched:
 
-- `Servo::set_verify_checksum(bool)` returns `UNSUPPORTED` if the protocol has
-  no checksum; `STSServo` forwards to its controller (`PARAM` if it has none).
+- `SerialLink::set_verify_checksum(bool)` on `STSServo` forwards to its
+  controller (`PARAM` if it has none). Servos without a serial link return
+  `nullptr` from `get_serial_link()`.
 - With verification off, a reply with a wrong checksum is still accepted if its
   frame (sync and length) and device ID validate.
-- `checksum_errors()` counts replies with a bad checksum, whether or not
-  verification is on. `Servo` default: 0. `verify_checksum()` default: `true`.
+- `get_checksum_errors()` counts replies with a bad checksum, whether or not
+  verification is on; 0 without a controller. `get_verify_checksum()` is
+  `true` without a controller.
 - The accessors are not thread-safe (see the common contract).
 
 ## STSServo
 
-`class STSServo : public Servo` in `stseries/sts_servo.h`. Not thread-safe;
+`class STSServo : public Servo, public RegisterAccess, public SerialLink` in
+`families/stseries/sts_servo.h`. Not thread-safe;
 every call is one blocking transaction as described in the
 [common contract](#common-contract).
 
 STS-specific rules:
 
-- **Target.** Methods without an `id` parameter act on `device_id()`. A
+- **Target.** Methods without an `id` parameter act on `get_device_id()`. A
   broadcast (0xFE) or higher ID makes every method that uses the bus return
   `PARAM`; a null controller does too.
 - **Words** are little endian (low byte at the lower register address).
 - **Status.** A reply whose status byte is non-zero makes the call return
-  `BAD_RESPONSE`; the byte is available from `last_status()`. The exceptions
+  `BAD_RESPONSE`; the byte is available from `get_last_status()`. The exceptions
   are `read_telemetry()`, `read_alarms()` and the position read of `hold()`,
   which accept it and report the alarm.
 - **Response mode.** A servo whose `REG_RESPONSE_MODE` is `RSP_READ_PING` does
@@ -377,9 +422,9 @@ STS-specific rules:
 |---|---|---|
 | `STSServo(ServoController*, id = 1)` | 2 | Borrows the controller (must outlive the servo). A null controller makes every bus call return `PARAM`. |
 | `STSServo(std::unique_ptr<ServoController>, id = 1)` | 2 | Takes ownership of the controller; its `SerialPort` must outlive the servo. |
-| `device_id()` | 2 | ID used by methods without an `id` parameter. No bus access. |
+| `get_device_id()` | 2 | ID used by methods without an `id` parameter. No bus access. |
 | `set_device_id(id)` | 2 | Changes only the ID this object addresses. Sends nothing; it does not reprogram the servo. |
-| `last_status()` | 2 | Status byte of the most recent valid reply (bitmask of `err_code_t`, 0 when healthy). Reset at the start of every call that uses the bus; stays 0 if no valid reply arrived. |
+| `get_last_status()` | 2 | Status byte of the most recent valid reply (bitmask of `err_code_t`, 0 when healthy). Reset at the start of every call that uses the bus; stays 0 if no valid reply arrived. |
 
 ### Constants
 
@@ -395,26 +440,30 @@ STS-specific rules:
 | `MAX_CURRENT_LIMIT` | 511; units of 6.5 mA |
 | `MAX_PROTECTION_TIME` | 254; units of 10 ms |
 | `MAX_OVERLOAD_LIMIT` | 100; percent of maximum torque |
+| `STALL_TORQUE_MNM` | 1912; ST3215 stall torque in mN*m (19.5 kgf*cm, rotor locked, 7.4 V supply); informational |
 | `ALARM_MASK_BITS` | 0x3F; defined `err_code_t` bits |
 | `PHASE_MULTITURN_BIT` | 1 << 4; `REG_PHASE` multi-turn feedback bit |
-| `PHASE_VERIFY_MASK` | `REG_PHASE` bits compared by write verification (all except bits 3 and 6) |
+| `PHASE_READBACK_MASK` | `REG_PHASE` bits compared by the readback check (all except bits 3 and 6) |
 | `REGISTER_SPACE` | 256; the control table is addressed by one byte |
 | `MAX_SPAN` | 64; longest register span of one read or write |
 
-### Register access (tier 3)
+### Explicit-ID register access (tier 3)
+
+These take the servo ID per call, so one object can address any servo on the
+bus. The `RegisterAccess` overloads without an `id` act on `get_device_id()`.
 
 | Method | Contract |
 |---|---|
-| `ping(id)` | Unicast ID 0..0xFD. 0xFE (broadcast) and above returns `PARAM`. |
+| `probe(id)` | Checks that the servo with `id` answers. Unicast ID 0..0xFD. 0xFE (broadcast) and above returns `PARAM`. |
 | `read_register(id, addr, data, len)` | `len` 1..`MAX_SPAN` and `addr + len <= REGISTER_SPACE`. `PARAM` for a null buffer or `len == 0`; `OUT_OF_RANGE` for a longer span or a span past the table. `data` is untouched on failure. |
-| `write_register(id, addr, data, len)` | Same limits. Written as given, no EEPROM handling; verified when `verify_writes()` is on. |
+| `write_register(id, addr, data, len)` | Same limits. Written as given, no EEPROM handling; followed by a readback check when `get_readback_check()` is on. |
 | `read_u8`, `read_u16` | One byte / one little-endian word; `PARAM` for a null output. |
 | `write_u8`, `write_u16` | One byte / one little-endian word; as `write_register`. |
-| `verify_rule(addr)` | Static, pure, no bus. See [write semantics](#write-semantics). |
+| `readback_rule(addr)` | Static, pure, no bus. See [write semantics](#write-semantics). |
 
 ### Typed helpers (tier 2)
 
-Each does one register write (or read) on `device_id()`; "SRAM" registers
+Each does one register write (or read) on `get_device_id()`; "SRAM" registers
 reset at power-up, "EEPROM" registers follow the lock.
 
 | Method | Contract |
@@ -446,19 +495,20 @@ reset at power-up, "EEPROM" registers follow the lock.
 
 | Method | Contract |
 |---|---|
-| `ping()` | `ping(device_id())`. |
-| `read_raw`, `write_raw` | `read_register` / `write_register` on `device_id()`. |
+| `probe()` | `probe(get_device_id())`. |
+| `get_registers()`, `get_serial_link()` | Both return `this`. |
 | `set_persist(bool)` | `unlock_eeprom()` / `lock_eeprom()`; keeps no state. |
-| `set_verify_checksum`, `verify_checksum`, `checksum_errors` | Forward to the controller. |
-| `set_verify_writes(bool)` | Always `OK`; touches no bus. `verify_writes()` returns the setting. |
+| `read_register`, `write_register`, `read_u8`, `read_u16`, `write_u8`, `write_u16` without an `id` | The explicit-ID call with `get_device_id()` (the `RegisterAccess` interface). |
+| `set_verify_checksum`, `get_verify_checksum`, `get_checksum_errors` | Forward to the controller (the `SerialLink` interface). |
+| `set_readback_check(bool)` | Always `OK`; touches no bus. `get_readback_check()` returns the setting. |
 | `move_to(angle_mdeg)` | Converts to steps (nearest) and writes `REG_CTRL_POS` once. `OUT_OF_RANGE` outside the limits' domain (nothing sent). |
-| `capabilities()` | Fixed STS description; no bus access; independent of `read_identity()`. |
-| `read_identity(Identity*)` | One read of the six bytes `0x00..0x05`; the device ID is the value stored in the servo. |
+| `get_capabilities()` | Fixed STS description; no bus access; independent of `identify()`. |
+| `identify(Identity*)` | One read of the six bytes `0x00..0x05`; the device ID is the value stored in the servo. |
 | `prepare()` | Writes `REG_RESPONSE_MODE = RSP_ALL`, then `REG_OPERATION_MODE = OP_SERVO`. Two plain writes, no reads. From `RSP_READ_PING` the first write gets no reply: it takes effect but `TIMEOUT` is returned and the second write is not sent; call again. |
 | `set_protection(const Protection&)` | Writes overcurrent threshold (6.5 mA units), overcurrent time (10 ms units), over-temperature threshold and the unload alarm mask, in that order; stops at the first failure. All values are validated first: a value that does not fit its register, or an alarm without a native bit (`STALLED`, `COMMUNICATION`, `UNLOADED`, `OTHER`), returns `OUT_OF_RANGE` and sends nothing. Values are never clamped. `OVER_VOLTAGE` and `UNDER_VOLTAGE` share one native bit, so requesting either releases torque on both. Overload and voltage thresholds are not written. |
-| `set_profile(const Profile&)` | Writes torque limit, start torque, acceleration, speed, in that order, one plain write each; values are clamped to `capabilities().limits` and converted. Start torque is an EEPROM-region register and follows the lock. Stops at the first failure. |
+| `set_profile(const Profile&)` | Writes torque limit, start torque, acceleration, speed, in that order, one plain write each; values are clamped to `get_capabilities().limits` and converted. Start torque is an EEPROM-region register and follows the lock. Stops at the first failure. |
 | `hold()` | Reads `REG_POSITION`, then writes it as the target (two transactions). Torque must already be enabled. A position outside the domain returns `OUT_OF_RANGE` and writes nothing. A servo reporting an alarm still yields its position. Never reports `OK` for a write that was not acknowledged. |
-| `hold_failed_step()` | Which sub-operation failed in the latest `hold()`: `HoldStep::NONE`, `READ_POSITION`, `POSITION_OUT_OF_DOMAIN` or `WRITE_TARGET`. |
+| `get_hold_failed_step()` | Which sub-operation failed in the latest `hold()`: `HoldStep::NONE`, `READ_POSITION`, `POSITION_OUT_OF_DOMAIN` or `WRITE_TARGET`. |
 | `set_torque(bool)` | `set_servo_enabled`. |
 | `read_telemetry(Telemetry*)` | One 15-byte read of `REG_POSITION..REG_CURRENT`. Fails as a whole on a transport error, short reply, or an undecodable field (load outside +-1000 permille, moving flag other than 0/1) with `BAD_RESPONSE`. Position is single-turn. Load, voltage and moving are always valid on STS. |
 | `read_alarms(AlarmSet*)` | Reads `REG_STATUS` and combines it with the reply status byte through `alarms_from_native()`. |
@@ -467,7 +517,7 @@ Not provided by STS (default `UNSUPPORTED`): `clear_alarms()`.
 
 ## STS units header
 
-`stseries/sts_units.h`, namespace `STS::units`. Header-only pure functions
+`families/stseries/sts_units.h`, namespace `STS::units`. Header-only pure functions
 (any thread). Conversions round to nearest, halves away from zero, and do not
 saturate.
 
@@ -493,7 +543,7 @@ saturate.
 
 ## STS definitions
 
-`stseries/stseries_defines.h`, namespace `STS`.
+`families/stseries/stseries_defines.h`, namespace `STS`.
 
 - Protocol constants: `LIB_FW_VERSION`, `SYNC_PATTERN` (0xFFFF), `MAX_ID`
   (0xFC, the highest usable device ID), `BROADCAST_ID` (0xFE, no response),
@@ -582,10 +632,10 @@ thread-safe. Constants: `DEF_TIMEOUT` (zero: "use the configured value"),
 | `sync_response(pattern, timeout)` | Waits for the sync pattern. `SRV_TIMEOUT` if not seen. |
 | `read_response(ServoPacket*, timeout)` | Reads one frame into the packet within `timeout` (a deadline over the whole frame). `SRV_BAD_FRAME` for an inconsistent frame, `SRV_BAD_CHECKSUM` for a bad checksum when verification is on, `SRV_TIMEOUT` for a missing or truncated frame. |
 | `read_response(buffer, len, timeout)` | Raw read of `len` bytes; `SRV_OVERFLOW` if `len` exceeds the buffer. Returns the count (may be short). |
-| `command_response(cmd, rsp, cmd_timeout, rsp_timeout)` | Send, then read. The whole call is bounded by `transaction_timeout()`. `SRV_BAD_ID` if the reply carries a different device ID than the command. |
+| `command_response(cmd, rsp, cmd_timeout, rsp_timeout)` | Send, then read. The whole call is bounded by `get_transaction_timeout()`. `SRV_BAD_ID` if the reply carries a different device ID than the command. |
 | `flush_rx()` | Discards buffered receive bytes; called before every command. |
-| `transaction_timeout()`, `set_transaction_timeout(t)` | Budget, always positive; `SRV_PARAM_ERR` for a non-positive value. |
-| `set_verify_checksum(bool)`, `verify_checksum()`, `checksum_errors()` | See [checksum option](#checksum-option). |
+| `get_transaction_timeout()`, `set_transaction_timeout(t)` | Budget, always positive; `SRV_PARAM_ERR` for a non-positive value. |
+| `set_verify_checksum(bool)`, `get_verify_checksum()`, `get_checksum_errors()` | See [checksum option](#checksum-option). |
 | `m_servo_bus`, `m_transmit_timeout`, `m_response_timeout`, `m_auto_disable_rx` | Public configuration members; changing them between calls is allowed, not during one. |
 
 A timeout argument of `DEF_TIMEOUT` (zero) selects the configured value.
@@ -593,7 +643,7 @@ A timeout argument of `DEF_TIMEOUT` (zero) selects the configured value.
 ## Packets
 
 `ServoPacket` (`serial/servo_packet.h`) is the abstract frame buffer;
-`STSeriesPacket` (`stseries/stseries_packet.h`) implements the STS frame
+`STSeriesPacket` (`families/stseries/stseries_packet.h`) implements the STS frame
 `FF FF id length code data... checksum`. Tier T. Packets are views over a
 caller-owned buffer (no heap); the buffer must outlive the packet; not
 thread-safe. `STSeriesPacket` needs a buffer of at least `NUM_META_BYTES`
@@ -603,8 +653,8 @@ thread-safe. `STSeriesPacket` needs a buffer of at least `NUM_META_BYTES`
 constructor is deleted); pure `sync_buffer()`, `data_buffer()`, `len_index()`,
 `is_well_formed()`, `reset()`; `is_frame_valid()` (size, sync and length, not
 checksum; defaults to `is_well_formed()`); `is_checksum_valid()` (default
-true); `packet_device_id()` (default -1); `resize(size)` (`SRV_OVERFLOW` above
-capacity; alters no bytes); `capacity()`, `raw_buffer()`, `size()`,
+true); `get_packet_device_id()` (default -1); `resize(size)` (`SRV_OVERFLOW` above
+capacity; alters no bytes); `get_capacity()`, `get_raw_buffer()`, `get_size()`,
 `as_bytes()`.
 
 `STSeriesPacket`:
@@ -614,7 +664,7 @@ capacity; alters no bytes); `capacity()`, `raw_buffer()`, `size()`,
 | `STSeriesPacket()`, `STSeriesPacket(const buffer_t&)` | The buffer constructor binds a buffer and resets it to the sync header. The default constructor is declared defaulted but cannot be used, because `ServoPacket` has no default constructor. |
 | `sync_buffer()`, `data_buffer()`, `len_index()`, `checksum_index()`, `data_size()` | Views and indices; `data_size()` is the payload byte count. |
 | `reset()` | Size 0 plus sync header. |
-| `is_well_formed()`, `is_frame_valid()`, `is_checksum_valid()`, `packet_device_id()` | Validation (size >= 6, sync, length field, checksum); device ID or -1 when too short. |
+| `is_well_formed()`, `is_frame_valid()`, `is_checksum_valid()`, `get_packet_device_id()` | Validation (size >= 6, sync, length field, checksum); device ID or -1 when too short. |
 | `compute_checksum()`, `compute_length()` | Values the frame should carry. |
 | `get_sync()`, `get_device_id()`, `get_length()`, `get_code()`, `get_data()`, `get_data_byte(idx, default)`, `get_data_word(idx, default)`, `get_checksum()` | Read fields; out-of-range reads return the default (0) or an empty view. |
 | `set_sync`, `set_device_id`, `set_length`, `set_code`, `set_data`, `set_checksum`, `update_length`, `update_checksum` | Write fields, growing the packet size as needed; `SRV_OVERFLOW` if the buffer is too small. |
@@ -657,8 +707,8 @@ register map or vendor documentation.
 
 1. `REG_EEPROM_LOCK` semantics: lock off stores writes, lock on makes them
    volatile across a power cycle.
-2. `PHASE_VERIFY_MASK`: the meaning of `REG_PHASE` bits is not documented; bits
-   3 and 6 are excluded from write verification on community documentation.
+2. `PHASE_READBACK_MASK`: the meaning of `REG_PHASE` bits is not documented; bits
+   3 and 6 are excluded from the readback check on community documentation.
 3. `prepare()`: that `OP_SERVO` position mode is the right mode for the generic
    operations.
 4. `set_protection()` and the typed protection setters: the units and the

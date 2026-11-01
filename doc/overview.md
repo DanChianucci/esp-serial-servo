@@ -20,13 +20,13 @@ layer, which it adds on ESP-IDF builds.
 
 | Layer | Headers | Role |
 |---|---|---|
-| core | `core/servo.h`, `core/servo_types.h`, `core/servo_utils.h` | Generic `Servo` interface, value types (`Result`, `Capabilities`, `Telemetry`, `AlarmSet`, ...), status codes. No I/O. |
-| serial | `serial/serial_port.h`, `serial/servo_controller.h`, `serial/servo_packet.h` | `SerialPort` transport interface, `ServoController` (one command/response transaction with bounded time), packet base class. |
-| stseries | `stseries/sts_servo.h`, `stseries/sts_units.h`, `stseries/stseries_packet.h`, `stseries/stseries_defines.h` | STS protocol framing, register map, unit conversions and the `STSServo` driver. |
+| core | `core/servo.h`, `core/register_access.h`, `core/servo_types.h`, `core/servo_utils.h` | Generic `Servo` interface, the `RegisterAccess` interface, value types (`Result`, `Capabilities`, `Telemetry`, `AlarmSet`, ...), status codes. No I/O. |
+| serial | `serial/serial_port.h`, `serial/serial_link.h`, `serial/servo_controller.h`, `serial/servo_packet.h` | `SerialPort` transport interface, `SerialLink` (checksum settings), `ServoController` (one command/response transaction with bounded time), packet base class. |
+| families/stseries | `families/stseries/sts_servo.h`, `families/stseries/sts_units.h`, `families/stseries/stseries_packet.h`, `families/stseries/stseries_defines.h` | STS protocol framing, register map, unit conversions and the `STSServo` driver. |
 | pwm | `pwm/` | Reserved for PWM-driven servos. Contains no code yet. |
 | platform | `platform/esp_idf.h` | `ESPSerialPort`, a `SerialPort` on an ESP-IDF UART. |
 
-Dependencies point downward: `stseries` uses `serial` and `core`; `serial`
+Dependencies point downward: `families/stseries` uses `serial` and `core`; `serial`
 uses `core`; `core` uses nothing. `platform` implements `serial`'s
 `SerialPort`.
 
@@ -36,11 +36,15 @@ uses `core`; `core` uses nothing. `platform` implements `serial`'s
 |---|---|---|---|
 | 1. Generic | `Servo&` | mdeg, mdeg/s, mA, mV, permille | The application should not care which servo family is attached. |
 | 2. Family | `STSServo` typed helpers (`set_speed`, `set_target_position`, `unlock_eeprom`, ...) | The family's native register units | You need an STS feature the generic interface does not model. |
-| 3. Raw | `read_raw`/`write_raw` on `Servo&`, or `read_register`/`write_register`/`read_u8`/`read_u16`/`write_u8`/`write_u16` on `STSServo` | Register bytes | You need a register no helper covers. |
+| 3. Registers | `RegisterAccess*` from `Servo::get_registers()` (`read_register`, `write_register`, `read_u8`, `read_u16`, `write_u8`, `write_u16`), or the same calls with an explicit ID on `STSServo` | Register bytes | You need a register no helper covers. |
 
-`STSServo` derives from `Servo`, so the three tiers can be mixed on one object.
+`STSServo` derives from `Servo`, `RegisterAccess` and `SerialLink`, so the three
+tiers can be mixed on one object. From a `Servo&`, `get_registers()` and
+`get_serial_link()` return non-owning pointers valid for the servo's lifetime, or
+`nullptr` when the servo lacks that interface; `get_registers()` is non-null
+exactly when `Feature::REGISTER_ACCESS` is set. No RTTI is used.
 Every call that talks to the servo is a synchronous bus transaction that
-returns a [`Result`](api.md#result); accessors such as `capabilities()` touch no
+returns a [`Result`](api.md#result); accessors such as `get_capabilities()` touch no
 bus.
 
 ## Building the stack
@@ -99,7 +103,7 @@ They are built and run with the host tests (`tests/host/CMakeLists.txt`).
   [capabilities](api.md#capabilities-and-features).
 - **Writes are written as given.** No read-compare-write and no automatic
   EEPROM lock handling. Reads happen only where documented: `hold()`, the
-  multi-turn setter, and opt-in write verification. See [write semantics](api.md#write-semantics).
+  multi-turn setter, and the opt-in readback check. See [write semantics](api.md#write-semantics).
 - **Atomic telemetry.** `read_telemetry()` returns every field or fails as a
   whole.
 - **Not thread-safe.** Serialize all calls per bus.

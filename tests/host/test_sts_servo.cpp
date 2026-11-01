@@ -4,7 +4,7 @@
 #include <memory>
 
 #include "fake_serial_port.h"
-#include "servokit/stseries/sts_servo.h"
+#include "servokit/families/stseries/sts_servo.h"
 
 static int g_failures = 0;
 #define CHECK(cond)                                               \
@@ -39,19 +39,19 @@ struct Rig {
 static void test_ping() {
   Rig r;
   r.port.script_reply({0xFF, 0xFF, 0x01, 0x02, 0x00, 0xFC});  // manual example
-  CHECK(r.servo.ping(1) == Result::OK);
+  CHECK(r.servo.probe(1) == Result::OK);
   CHECK(r.port.tx_log().size() == 1);
   CHECK((r.port.tx_log()[0] == Bytes{0xFF, 0xFF, 0x01, 0x02, 0x01, 0xFB}));
 
   // The Servo overload uses the configured ID.
   r.servo.set_device_id(7);
   r.port.script_reply(frame(7, 0, {}));
-  CHECK(r.servo.ping() == Result::OK);
+  CHECK(r.servo.probe() == Result::OK);
   CHECK((r.port.tx_log()[1] == Bytes{0xFF, 0xFF, 0x07, 0x02, 0x01, 0xF5}));
 
   // Broadcast and 0xFF are never sent.
-  CHECK(r.servo.ping(0xFE) == Result::PARAM);
-  CHECK(r.servo.ping(0xFF) == Result::PARAM);
+  CHECK(r.servo.probe(0xFE) == Result::PARAM);
+  CHECK(r.servo.probe(0xFF) == Result::PARAM);
   CHECK(r.port.tx_log().size() == 2);
 }
 
@@ -78,7 +78,9 @@ static void test_read() {
   r.port.script_reply(frame(1, 0, {9, 8}));
   uint8_t raw[2] = {};
   Servo& s = r.servo;
-  CHECK(s.read_raw(0x38, raw, 2) == Result::OK && raw[0] == 9 && raw[1] == 8);
+  RegisterAccess* regs = s.get_registers();
+  CHECK(regs != nullptr && regs == static_cast<RegisterAccess*>(&r.servo));
+  CHECK(regs->read_register(0x38, raw, 2) == Result::OK && raw[0] == 9 && raw[1] == 8);
 }
 
 static void test_write() {
@@ -98,7 +100,7 @@ static void test_write() {
 
   r.port.script_reply(frame(1, 0, {}));
   Servo& s = r.servo;
-  CHECK(s.write_raw(0x28, data, 1) == Result::OK);
+  CHECK(s.get_registers()->write_register(0x28, data, 1) == Result::OK);
   CHECK((r.port.tx_log()[3] == Bytes{0xFF, 0xFF, 0x01, 0x04, 0x03, 0x28, 0x01, 0xCE}));
 }
 
@@ -115,14 +117,16 @@ static void test_timeout_and_checksum() {
     r.port.script_reply(frame(1, 0, {1, 2}, false));
     CHECK(r.servo.read_register(1, 0x38, b, 2) == Result::BAD_RESPONSE);
     CHECK(b[0] == 0xEE);
-    CHECK(r.servo.checksum_errors() == 1);
-    Servo& s = r.servo;
-    CHECK(s.verify_checksum());
+    CHECK(r.servo.get_checksum_errors() == 1);
+    SerialLink* s_ptr = static_cast<Servo&>(r.servo).get_serial_link();
+    CHECK(s_ptr == static_cast<SerialLink*>(&r.servo));
+    SerialLink& s = *s_ptr;
+    CHECK(s.get_verify_checksum());
     CHECK(s.set_verify_checksum(false) == Result::OK);
-    CHECK(!s.verify_checksum() && !r.ctl.verify_checksum());
+    CHECK(!s.get_verify_checksum() && !r.ctl.get_verify_checksum());
     r.port.script_reply(frame(1, 0, {1, 2}, false));
     CHECK(r.servo.read_register(1, 0x38, b, 2) == Result::OK && b[0] == 1 && b[1] == 2);
-    CHECK(s.checksum_errors() == 2);
+    CHECK(s.get_checksum_errors() == 2);
     // Verification off still rejects a bad length.
     r.port.script_reply(frame(1, 0, {1, 2}, false, 1));
     CHECK(r.servo.read_register(1, 0x38, b, 2) == Result::TIMEOUT);
@@ -160,12 +164,12 @@ static void test_id_and_framing() {
     r.port.script_reply(frame(1, 0, {1}));
     CHECK(r.servo.write_u8(1, 0x28, 1) == Result::BAD_RESPONSE);
     r.port.script_reply(frame(1, 0, {1}));
-    CHECK(r.servo.ping(1) == Result::BAD_RESPONSE);
+    CHECK(r.servo.probe(1) == Result::BAD_RESPONSE);
   }
   {  // truncated header
     Rig r;
     r.port.script_reply({0xFF, 0xFF, 0x01});
-    CHECK(r.servo.ping(1) == Result::TIMEOUT);
+    CHECK(r.servo.probe(1) == Result::TIMEOUT);
   }
 }
 
@@ -175,23 +179,23 @@ static void test_servo_error_flag() {
   const uint8_t both = STS::STAT_OVERLOAD | STS::STAT_TEMPERATURE;
   r.port.script_reply(frame(1, both, {1, 2}));
   CHECK(r.servo.read_register(1, 0x38, b, 2) == Result::BAD_RESPONSE);
-  CHECK(r.servo.last_status() == both);
+  CHECK(r.servo.get_last_status() == both);
   CHECK(b[0] == 0xEE);
   r.port.script_reply(frame(1, STS::STAT_VOLTAGE, {}));
   CHECK(r.servo.write_u8(1, 0x28, 1) == Result::BAD_RESPONSE);
-  CHECK(r.servo.last_status() == STS::STAT_VOLTAGE);
+  CHECK(r.servo.get_last_status() == STS::STAT_VOLTAGE);
   r.port.script_reply(frame(1, STS::STAT_SENSOR, {}));
-  CHECK(r.servo.ping(1) == Result::BAD_RESPONSE);
+  CHECK(r.servo.probe(1) == Result::BAD_RESPONSE);
   // A healthy reply clears the remembered status.
   r.port.script_reply(frame(1, 0, {}));
-  CHECK(r.servo.ping(1) == Result::OK && r.servo.last_status() == 0);
+  CHECK(r.servo.probe(1) == Result::OK && r.servo.get_last_status() == 0);
 }
 
 static void test_bus_failure() {
   uint8_t b[2] = {0xEE, 0xEE};
   Rig r;
   r.port.fail_next_write();
-  CHECK(r.servo.ping(1) == Result::BUS);
+  CHECK(r.servo.probe(1) == Result::BUS);
   CHECK(r.port.rx_enabled());
   r.port.script_reply(frame(1, 0, {1, 2}));
   r.port.fail_next_read();
@@ -229,31 +233,31 @@ static void test_ranges_and_params() {
 
 static void test_no_controller_and_ownership() {
   STSServo none(static_cast<ServoController*>(nullptr), 1);
-  CHECK(none.ping(1) == Result::PARAM);
+  CHECK(none.probe(1) == Result::PARAM);
   CHECK(none.set_verify_checksum(false) == Result::PARAM);
-  CHECK(none.verify_checksum() && none.checksum_errors() == 0);
+  CHECK(none.get_verify_checksum() && none.get_checksum_errors() == 0);
 
   FakeSerialPort port;
   STSServo owned(std::make_unique<ServoController>(&port, milliseconds(10), milliseconds(20)), 3);
   port.script_reply(frame(3, 0, {}));
-  CHECK(owned.ping() == Result::OK);
-  CHECK(owned.capabilities().features.has(Feature::ABSOLUTE_POSITION));
+  CHECK(owned.probe() == Result::OK);
+  CHECK(owned.get_capabilities().features.has(Feature::ABSOLUTE_POSITION));
 }
 
 static void test_verify_off_and_default() {
   Rig r;
-  CHECK(!r.servo.verify_writes());
+  CHECK(!r.servo.get_readback_check());
   r.port.script_reply(frame(1, 0, {}));
   CHECK(r.servo.write_u8(1, STS::REG_DEVICE_ID, 2) == Result::OK);
   CHECK(r.port.tx_log().size() == 1);
-  CHECK(r.servo.set_verify_writes(true) == Result::OK && r.servo.verify_writes());
+  CHECK(r.servo.set_readback_check(true) == Result::OK && r.servo.get_readback_check());
   CHECK(r.port.tx_log().size() == 1);  // the setting touches no bus
-  CHECK(r.servo.set_verify_writes(false) == Result::OK && !r.servo.verify_writes());
+  CHECK(r.servo.set_readback_check(false) == Result::OK && !r.servo.get_readback_check());
 }
 
 static void test_verify_match_and_mismatch() {
   Rig r;
-  r.servo.set_verify_writes(true);
+  r.servo.set_readback_check(true);
   r.port.script_reply(frame(1, 0, {}));
   r.port.script_reply(frame(1, 0, {0x2C, 0x01}));
   CHECK(r.servo.write_u16(1, STS::REG_START_TORQUE, 0x012C) == Result::OK);
@@ -266,22 +270,22 @@ static void test_verify_match_and_mismatch() {
   CHECK(r.servo.write_u16(1, STS::REG_START_TORQUE, 0x012C) == Result::VERIFY_FAILED);
   CHECK(r.port.tx_log().size() == 4);
 
-  // Through the generic interface, raw write.
+  // Through the RegisterAccess interface.
   Servo& s = r.servo;
   const uint8_t v = 7;
   r.port.script_reply(frame(1, 0, {}));
   r.port.script_reply(frame(1, 0, {7}));
-  CHECK(s.verify_writes());
-  CHECK(s.write_raw(STS::REG_POS_COEF_P, &v, 1) == Result::OK);
+  CHECK(s.get_registers()->get_readback_check());
+  CHECK(s.get_registers()->write_register(STS::REG_POS_COEF_P, &v, 1) == Result::OK);
   r.port.script_reply(frame(1, 0, {}));
   r.port.script_reply(frame(1, 0, {8}));
-  CHECK(s.write_raw(STS::REG_POS_COEF_P, &v, 1) == Result::VERIFY_FAILED);
+  CHECK(s.get_registers()->write_register(STS::REG_POS_COEF_P, &v, 1) == Result::VERIFY_FAILED);
   CHECK(r.port.tx_log().size() == 8);
 }
 
 static void test_verify_failures() {
   Rig r;
-  r.servo.set_verify_writes(true);
+  r.servo.set_readback_check(true);
   // Read-back times out: its own error, the write took effect.
   r.port.script_reply(frame(1, 0, {}));
   r.port.script_timeout();
@@ -303,7 +307,7 @@ static void test_verify_failures() {
 
   // Write failure: no read frame follows.
   Rig w;
-  w.servo.set_verify_writes(true);
+  w.servo.set_readback_check(true);
   w.port.script_timeout();
   CHECK(w.servo.write_u8(1, STS::REG_POS_COEF_P, 5) == Result::TIMEOUT);
   CHECK(w.port.tx_log().size() == 1);
@@ -314,7 +318,7 @@ static void test_verify_failures() {
 
 static void test_verify_masks_and_skips() {
   Rig r;
-  r.servo.set_verify_writes(true);
+  r.servo.set_readback_check(true);
   // Bits outside the REG_PHASE mask may differ.
   r.port.script_reply(frame(1, 0, {}));
   r.port.script_reply(frame(1, 0, {(uint8_t)(0x10 ^ 0x08 ^ 0x40)}));
@@ -345,7 +349,7 @@ static void test_verify_masks_and_skips() {
 
 static void test_verify_span() {
   Rig r;
-  r.servo.set_verify_writes(true);
+  r.servo.set_readback_check(true);
   // REG_CTRL_ACCEL and REG_CTRL_POS are volatile: no read.
   const uint8_t vol[3] = {1, 2, 3};
   r.port.script_reply(frame(1, 0, {}));
@@ -378,7 +382,7 @@ static void test_verify_span() {
 
 static void test_verify_new_device_id() {
   Rig r;
-  r.servo.set_verify_writes(true);
+  r.servo.set_readback_check(true);
   r.port.script_reply(frame(1, 0, {}));
   r.port.script_reply(frame(2, 0, {2}));
   CHECK(r.servo.write_u8(1, STS::REG_DEVICE_ID, 2) == Result::OK);
@@ -386,7 +390,7 @@ static void test_verify_new_device_id() {
 
   // An ID above STS::MAX_ID cannot be addressed afterwards: no read-back.
   Rig hi;
-  hi.servo.set_verify_writes(true);
+  hi.servo.set_readback_check(true);
   hi.port.script_reply(frame(1, 0, {}));
   CHECK(hi.servo.write_u8(1, STS::REG_DEVICE_ID, STS::MAX_ID + 1) == Result::OK);
   CHECK(hi.port.tx_log().size() == 1);
@@ -398,7 +402,7 @@ static void test_verify_new_device_id() {
 }
 
 static void test_verify_rule_table() {
-  using VC = STSServo::VerifyClass;
+  using VC = STSServo::ReadbackClass;
   struct Row {
     uint16_t addr;
     uint8_t bytes;
@@ -416,7 +420,7 @@ static void test_verify_rule_table() {
       {STS::REG_OVERVOLT_THRESH, 1, VC::STABLE, 0xFF},
       {STS::REG_UNDERVOLT_THRESH, 1, VC::STABLE, 0xFF},
       {STS::REG_CONTROL_TORQUE_NV, 2, VC::STABLE, 0xFF},
-      {STS::REG_PHASE, 1, VC::STABLE_MASKED, STSServo::PHASE_VERIFY_MASK},
+      {STS::REG_PHASE, 1, VC::STABLE_MASKED, STSServo::PHASE_READBACK_MASK},
       {STS::REG_UNLOAD_ALARM_MASK, 1, VC::STABLE, 0xFF},
       {STS::REG_LED_ALARM_MASK, 1, VC::STABLE, 0xFF},
       {STS::REG_POS_COEF_P, 1, VC::STABLE, 0xFF},
@@ -458,11 +462,11 @@ static void test_verify_rule_table() {
   };
   for (const Row& row : rows) {
     for (uint8_t i = 0; i < row.bytes; ++i) {
-      const STSServo::VerifyRule v = STSServo::verify_rule(row.addr + i);
+      const STSServo::ReadbackRule v = STSServo::readback_rule(row.addr + i);
       CHECK(v.kind == row.kind && v.mask == row.mask);
     }
   }
-  CHECK((STSServo::PHASE_VERIFY_MASK & STSServo::PHASE_MULTITURN_BIT) != 0);
+  CHECK((STSServo::PHASE_READBACK_MASK & STSServo::PHASE_MULTITURN_BIT) != 0);
 }
 
 int main() {

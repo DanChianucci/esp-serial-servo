@@ -10,7 +10,11 @@
 //    when any one of their transactions fails (writes stop at the first failure), and read_telemetry leaves its output untouched;
 //  - null output pointers return PARAM;
 //  - set_persist agrees with Feature::PERSIST_CONFIG;
-//  - set_verify_writes and verify_writes agree with Feature::VERIFY_WRITES;
+//  - get_registers() is non-null exactly when Feature::REGISTER_ACCESS is set,
+//    and its set_readback_check/get_readback_check agree with
+//    Feature::READBACK_CHECK;
+//  - get_serial_link() is stable across calls and, when non-null, reports
+//    checksum verification on by default;
 //  - limits are populated for the features that use them.
 #ifndef SERVO_CONFORMANCE__H
 #define SERVO_CONFORMANCE__H
@@ -20,7 +24,9 @@
 #include <cstdio>
 #include <functional>
 
+#include "servokit/core/register_access.h"
 #include "servokit/core/servo.h"
+#include "servokit/serial/serial_link.h"
 
 namespace servokit_test {
 
@@ -36,8 +42,8 @@ enum class ConformanceOp {
   SET_PERSIST,
   READ_TELEMETRY,
   READ_ALARMS,
-  RAW_READ,
-  RAW_WRITE
+  REGISTER_READ,
+  REGISTER_WRITE
 };
 
 struct ConformanceHooks {
@@ -64,7 +70,7 @@ inline int run_servo_conformance(servokit::Servo& s, const ConformanceHooks& h, 
     }                                                                         \
   } while (0)
 
-  const Capabilities caps = s.capabilities();
+  const Capabilities caps = s.get_capabilities();
   const FeatureSet f = caps.features;
   const Limits& l = caps.limits;
 
@@ -101,6 +107,27 @@ inline int run_servo_conformance(servokit::Servo& s, const ConformanceHooks& h, 
   AlarmSet alarms;
   uint8_t raw[2] = {0, 0};
 
+  // The register interface exists exactly when the feature is advertised; the
+  // pointer is stable. A servo without it gets a stand-in whose calls report
+  // UNSUPPORTED, so the table below can stay uniform.
+  struct NoRegisters : RegisterAccess {
+    Result read_register(uint16_t, uint8_t*, size_t) override { return Result::UNSUPPORTED; }
+    Result write_register(uint16_t, const uint8_t*, size_t) override { return Result::UNSUPPORTED; }
+    Result read_u8(uint16_t, uint8_t*) override { return Result::UNSUPPORTED; }
+    Result read_u16(uint16_t, uint16_t*) override { return Result::UNSUPPORTED; }
+    Result write_u8(uint16_t, uint8_t) override { return Result::UNSUPPORTED; }
+    Result write_u16(uint16_t, uint16_t) override { return Result::UNSUPPORTED; }
+    Result set_readback_check(bool) override { return Result::UNSUPPORTED; }
+    bool get_readback_check() const override { return false; }
+  } no_registers;
+  RegisterAccess* const reg_ptr = s.get_registers();
+  CONF_CHECK((reg_ptr != nullptr) == f.has(Feature::REGISTER_ACCESS));
+  CONF_CHECK(s.get_registers() == reg_ptr);
+  SerialLink* const link = s.get_serial_link();
+  CONF_CHECK(s.get_serial_link() == link);
+  CONF_CHECK(link == nullptr || link->get_verify_checksum());
+  RegisterAccess* const regs = reg_ptr != nullptr ? reg_ptr : &no_registers;
+
   // prepare() has no feature flag: a family either implements it or returns
   // UNSUPPORTED without sending anything.
   h.reset();
@@ -117,8 +144,8 @@ inline int run_servo_conformance(servokit::Servo& s, const ConformanceHooks& h, 
     std::function<Result()> call;
   };
   const Case cases[] = {
-      {ConformanceOp::PING, f.has(Feature::PING), [&] { return s.ping(); }},
-      {ConformanceOp::READ_IDENTITY, f.has(Feature::READ_IDENTITY), [&] { return s.read_identity(&identity); }},
+      {ConformanceOp::PING, f.has(Feature::PING), [&] { return s.probe(); }},
+      {ConformanceOp::READ_IDENTITY, f.has(Feature::READ_IDENTITY), [&] { return s.identify(&identity); }},
       {ConformanceOp::PREPARE, has_prepare, [&] { return s.prepare(); }},
       {ConformanceOp::SET_PROTECTION, has_protection, [&] { return s.set_protection(protection); }},
       {ConformanceOp::SET_PROFILE, has_profile, [&] { return s.set_profile(profile); }},
@@ -128,8 +155,10 @@ inline int run_servo_conformance(servokit::Servo& s, const ConformanceHooks& h, 
       {ConformanceOp::SET_PERSIST, f.has(Feature::PERSIST_CONFIG), [&] { return s.set_persist(true); }},
       {ConformanceOp::READ_TELEMETRY, has_telemetry, [&] { return s.read_telemetry(&telemetry); }},
       {ConformanceOp::READ_ALARMS, f.has(Feature::READ_ALARMS), [&] { return s.read_alarms(&alarms); }},
-      {ConformanceOp::RAW_READ, f.has(Feature::RAW_REGISTERS), [&] { return s.read_raw(0, raw, 2); }},
-      {ConformanceOp::RAW_WRITE, f.has(Feature::RAW_REGISTERS), [&] { return s.write_raw(0, raw, 2); }},
+      {ConformanceOp::REGISTER_READ, f.has(Feature::REGISTER_ACCESS),
+       [&] { return regs->read_register(0, raw, 2); }},
+      {ConformanceOp::REGISTER_WRITE, f.has(Feature::REGISTER_ACCESS),
+       [&] { return regs->write_register(0, raw, 2); }},
   };
 
   for (const Case& c : cases) {
@@ -144,15 +173,15 @@ inline int run_servo_conformance(servokit::Servo& s, const ConformanceHooks& h, 
     }
   }
 
-  // Write verification: off by default, and settable exactly when advertised.
+  // Readback check: off by default, and settable exactly when advertised.
   h.reset();
-  CONF_CHECK(!s.verify_writes());
-  const Result verify_on = s.set_verify_writes(true);
-  CONF_CHECK((verify_on == Result::OK) == f.has(Feature::VERIFY_WRITES));
+  CONF_CHECK(!regs->get_readback_check());
+  const Result verify_on = regs->set_readback_check(true);
+  CONF_CHECK((verify_on == Result::OK) == f.has(Feature::READBACK_CHECK));
   CONF_CHECK(verify_on == Result::OK || verify_on == Result::UNSUPPORTED);
-  CONF_CHECK(s.verify_writes() == f.has(Feature::VERIFY_WRITES));
-  CONF_CHECK(s.set_verify_writes(false) == verify_on);
-  CONF_CHECK(!s.verify_writes());
+  CONF_CHECK(regs->get_readback_check() == f.has(Feature::READBACK_CHECK));
+  CONF_CHECK(regs->set_readback_check(false) == verify_on);
+  CONF_CHECK(!regs->get_readback_check());
   CONF_CHECK(h.frames_sent() == 0);
 
   // set_persist(false) agrees with set_persist(true).
@@ -238,7 +267,7 @@ inline int run_servo_conformance(servokit::Servo& s, const ConformanceHooks& h, 
   }
   if (f.has(Feature::READ_IDENTITY)) {
     h.reset();
-    CONF_CHECK(s.read_identity(nullptr) == Result::PARAM);
+    CONF_CHECK(s.identify(nullptr) == Result::PARAM);
   }
 
   // A missing bus reply is reported, never turned into OK.

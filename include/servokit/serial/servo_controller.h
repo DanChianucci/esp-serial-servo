@@ -13,7 +13,7 @@
 
 namespace servokit {
 
-/** Maps a legacy srv_* status code (0 = OK, negative = error) to the generic Result.
+/** Maps an srv_* status code (0 = OK, negative = error) to the generic Result.
  *  SRV_OK -> OK; SRV_TIMEOUT -> TIMEOUT; SRV_READ_FAIL, SRV_WRITE_FAIL -> BUS;
  *  SRV_BAD_FRAME, SRV_BAD_CHECKSUM, SRV_BAD_ID -> BAD_RESPONSE;
  *  SRV_PARAM_ERR, SRV_OVERFLOW (caller buffer too small) -> PARAM;
@@ -53,16 +53,16 @@ class ServoController {
   /** Total time (send + response) one command_response() may take. Always finite
    *  and positive; defaults to tx_timeout + rx_timeout from the constructor.
    *  Zero or negative values are rejected with SRV_PARAM_ERR. */
-  timeout_duration_t transaction_timeout() const { return m_transaction_timeout; }
+  timeout_duration_t get_transaction_timeout() const { return m_transaction_timeout; }
   srv_stat_t set_transaction_timeout(timeout_duration_t timeout);
 
   /** Response checksum verification (default true). When false, a response whose
    *  checksum is wrong is still accepted if frame (sync/length) and ID validate;
    *  the mismatch is counted. Transmitted frames always carry a correct checksum. */
   void set_verify_checksum(bool enable) { m_verify_checksum = enable; }
-  bool verify_checksum() const { return m_verify_checksum; }
+  bool get_verify_checksum() const { return m_verify_checksum; }
   /** Number of responses with a bad checksum seen (counted whether or not verification is on). */
-  uint32_t checksum_errors() const { return m_checksum_errors; }
+  uint32_t get_checksum_errors() const { return m_checksum_errors; }
 
   SerialPort* m_servo_bus;
   timeout_duration_t m_transmit_timeout;  // Timeout allowed for transmission

@@ -1,5 +1,5 @@
 
-#include "servokit/stseries/sts_servo.h"
+#include "servokit/families/stseries/sts_servo.h"
 
 namespace servokit {
 

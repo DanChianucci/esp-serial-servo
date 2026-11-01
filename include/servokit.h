@@ -5,11 +5,13 @@
   #include "servokit/serial/serial_port.h"
   #include "servokit/serial/servo_controller.h"
   #include "servokit/serial/servo_packet.h"
+  #include "servokit/serial/serial_link.h"
   #include "servokit/core/servo_utils.h"
   #include "servokit/core/servo_types.h"
+  #include "servokit/core/register_access.h"
   #include "servokit/core/servo.h"
 
-  #include "servokit/stseries.h"
+  #include "servokit/families/stseries.h"
 
 
   #if defined(ESP_PLATFORM) |  defined(SERVOKIT_IMPL_ESP)

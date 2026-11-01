@@ -8,8 +8,8 @@
 
 #include "conformance/servo_conformance.h"
 #include "fake_serial_port.h"
-#include "servokit/stseries/sts_servo.h"
-#include "servokit/stseries/sts_units.h"
+#include "servokit/families/stseries/sts_servo.h"
+#include "servokit/families/stseries/sts_units.h"
 
 static int g_failures = 0;
 #define CHECK(cond)                                               \
@@ -149,13 +149,13 @@ static void test_alarm_table() {
 
 static void test_capabilities() {
   Rig r;
-  const Capabilities c = r.servo.capabilities();
+  const Capabilities c = r.servo.get_capabilities();
   for (Feature f : {Feature::ABSOLUTE_POSITION, Feature::SET_SPEED, Feature::SET_ACCEL, Feature::TORQUE_LIMIT,
                     Feature::START_TORQUE, Feature::TORQUE_ENABLE, Feature::HOLD, Feature::READ_POSITION,
                     Feature::READ_CURRENT, Feature::READ_LOAD, Feature::READ_VOLTAGE, Feature::READ_TEMPERATURE,
                     Feature::READ_MOVING, Feature::READ_ALARMS, Feature::PROTECT_CURRENT, Feature::PROTECT_TEMP,
                     Feature::PROTECT_RELEASE_ON_ALARM, Feature::PING, Feature::READ_IDENTITY,
-                    Feature::RAW_REGISTERS, Feature::PERSIST_CONFIG, Feature::VERIFY_WRITES}) {
+                    Feature::REGISTER_ACCESS, Feature::PERSIST_CONFIG, Feature::READBACK_CHECK}) {
     CHECK(c.features.has(f));
   }
   // Unverified or not offered through the generic API.
@@ -169,6 +169,7 @@ static void test_capabilities() {
   CHECK(c.limits.angle_min_mdeg == -2699912 && c.limits.angle_max_mdeg == 2699912);
   CHECK(c.limits.resolution_mdeg == 88 && c.limits.max_speed_mdeg_s == 298828);
   CHECK(c.limits.max_accel_mdeg_s2 == 2232422 && c.limits.max_torque_permille == 1000);
+  CHECK(c.limits.max_torque_mnm == STSServo::STALL_TORQUE_MNM && c.limits.max_torque_mnm == 1912);
   CHECK(c.limits.current_min_ma == -212986 && c.limits.current_max_ma == 212986);
   CHECK(c.limits.current_max_ma == u::current_units_to_ma(u::decode_current_units(0x7FFF)));
   CHECK(c.limits.current_min_ma == u::current_units_to_ma(u::decode_current_units(0xFFFF)));
@@ -209,7 +210,7 @@ static void test_identity() {
   r.value({3, 7, 0, 9, 3, 1});
   Identity id;
   id.model_major = 99;
-  CHECK(r.servo.read_identity(&id) == Result::OK);
+  CHECK(r.servo.identify(&id) == Result::OK);
   CHECK(r.sent() == 1 && r.tx(0) == read_cmd(0x00, 6));
   CHECK(std::string(id.family) == "STS");
   CHECK(id.firmware_major == 3 && id.firmware_minor == 7);
@@ -217,10 +218,10 @@ static void test_identity() {
   Identity untouched;
   untouched.model_major = 99;
   r.value({3, 7, 0, 9, 3});  // one byte short
-  CHECK(r.servo.read_identity(&untouched) == Result::BAD_RESPONSE && untouched.model_major == 99);
+  CHECK(r.servo.identify(&untouched) == Result::BAD_RESPONSE && untouched.model_major == 99);
   r.port.script_timeout();
-  CHECK(r.servo.read_identity(&untouched) == Result::TIMEOUT && untouched.model_major == 99);
-  CHECK(r.servo.read_identity(nullptr) == Result::PARAM && r.sent() == 3);
+  CHECK(r.servo.identify(&untouched) == Result::TIMEOUT && untouched.model_major == 99);
+  CHECK(r.servo.identify(nullptr) == Result::PARAM && r.sent() == 3);
 }
 
 static void test_prepare() {
@@ -374,7 +375,7 @@ static void test_hold() {
     r.ack();
     CHECK(r.servo.hold() == Result::OK);
     CHECK(r.sent() == 2 && r.tx(0) == read_cmd(0x38, 2) && r.tx(1) == write_cmd(0x2A, {0x00, 0x08}));
-    CHECK(r.servo.hold_failed_step() == STSServo::HoldStep::NONE);
+    CHECK(r.servo.get_hold_failed_step() == STSServo::HoldStep::NONE);
   }
   {
     Rig r;  // negative feedback is re-encoded as sign-magnitude
@@ -392,36 +393,36 @@ static void test_hold() {
     Rig r;  // read times out: nothing is commanded
     r.port.script_timeout();
     CHECK(r.servo.hold() == Result::TIMEOUT);
-    CHECK(r.sent() == 1 && r.servo.hold_failed_step() == STSServo::HoldStep::READ_POSITION);
+    CHECK(r.sent() == 1 && r.servo.get_hold_failed_step() == STSServo::HoldStep::READ_POSITION);
   }
   {
     Rig r;  // short position reply
     r.value({0x00});
     CHECK(r.servo.hold() == Result::BAD_RESPONSE);
-    CHECK(r.sent() == 1 && r.servo.hold_failed_step() == STSServo::HoldStep::READ_POSITION);
+    CHECK(r.sent() == 1 && r.servo.get_hold_failed_step() == STSServo::HoldStep::READ_POSITION);
   }
   {
     Rig r;  // write unanswered: not reported as success
     r.value({0x00, 0x08});
     r.port.script_timeout();
     CHECK(r.servo.hold() == Result::TIMEOUT);
-    CHECK(r.sent() == 2 && r.servo.hold_failed_step() == STSServo::HoldStep::WRITE_TARGET);
+    CHECK(r.sent() == 2 && r.servo.get_hold_failed_step() == STSServo::HoldStep::WRITE_TARGET);
   }
   {
     Rig r;  // write answered with an error status
     r.value({0x00, 0x08});
     r.value({}, STS::STAT_VOLTAGE);
     CHECK(r.servo.hold() == Result::BAD_RESPONSE);
-    CHECK(r.servo.hold_failed_step() == STSServo::HoldStep::WRITE_TARGET);
+    CHECK(r.servo.get_hold_failed_step() == STSServo::HoldStep::WRITE_TARGET);
   }
   {
     Rig r;  // magnitude beyond the target range: nothing written
     r.value({0xFF, 0x7F});
     CHECK(r.servo.hold() == Result::OUT_OF_RANGE);
-    CHECK(r.sent() == 1 && r.servo.hold_failed_step() == STSServo::HoldStep::POSITION_OUT_OF_DOMAIN);
+    CHECK(r.sent() == 1 && r.servo.get_hold_failed_step() == STSServo::HoldStep::POSITION_OUT_OF_DOMAIN);
     r.value({0x00, 0x08});
     r.ack();
-    CHECK(r.servo.hold() == Result::OK && r.servo.hold_failed_step() == STSServo::HoldStep::NONE);
+    CHECK(r.servo.hold() == Result::OK && r.servo.get_hold_failed_step() == STSServo::HoldStep::NONE);
   }
 }
 
@@ -507,7 +508,7 @@ static void test_telemetry_alarms() {
       r.value(f.bytes(), (uint8_t)(1u << bit));
       Telemetry t;
       CHECK(r.servo.read_telemetry(&t) == Result::OK && t.alarms == expect[bit] && t.position_mdeg == 180000);
-      CHECK(r.servo.last_status() == (1u << bit));
+      CHECK(r.servo.get_last_status() == (1u << bit));
       r.value({0}, (uint8_t)(1u << bit));
       AlarmSet a;
       CHECK(r.servo.read_alarms(&a) == Result::OK && a == expect[bit]);
@@ -611,7 +612,7 @@ static void script_sts(Rig& r, ConformanceOp op, int fail_at) {
     case ConformanceOp::MOVE_TO:
     case ConformanceOp::SET_TORQUE:
     case ConformanceOp::SET_PERSIST:
-    case ConformanceOp::RAW_WRITE: replies = {reply()}; break;
+    case ConformanceOp::REGISTER_WRITE: replies = {reply()}; break;
     case ConformanceOp::READ_IDENTITY: replies = {reply({3, 7, 0, 9, 3, 1})}; break;
     case ConformanceOp::PREPARE: replies = {reply(), reply()}; break;
     case ConformanceOp::SET_PROTECTION:
@@ -619,7 +620,7 @@ static void script_sts(Rig& r, ConformanceOp op, int fail_at) {
     case ConformanceOp::HOLD: replies = {reply({0x00, 0x08}), reply()}; break;
     case ConformanceOp::READ_TELEMETRY: replies = {reply(Feedback{}.bytes())}; break;
     case ConformanceOp::READ_ALARMS: replies = {reply({0})}; break;
-    case ConformanceOp::RAW_READ: replies = {reply({1, 2})}; break;
+    case ConformanceOp::REGISTER_READ: replies = {reply({1, 2})}; break;
   }
   for (size_t i = 0; i < replies.size(); ++i) {
     if (fail_at >= 0 && (int)i == fail_at) {
@@ -643,7 +644,7 @@ static void test_conformance() {
     class MoveOnly : public Servo {
      public:
       Result move_to(int32_t a) override { return (a < -1000000 || a > 1000000) ? Result::OUT_OF_RANGE : Result::OK; }
-      Capabilities capabilities() const override {
+      Capabilities get_capabilities() const override {
         Capabilities c;
         c.features = Feature::ABSOLUTE_POSITION;
         c.limits.angle_min_mdeg = -1000000;
@@ -663,7 +664,7 @@ static void test_conformance() {
      public:
       explicit Liar(bool claims_hold) : m_claims_hold(claims_hold) {}
       Result move_to(int32_t a) override { return (a < -100 || a > 100) ? Result::OUT_OF_RANGE : Result::OK; }
-      Capabilities capabilities() const override {
+      Capabilities get_capabilities() const override {
         Capabilities c;
         c.features = m_claims_hold ? (Feature::ABSOLUTE_POSITION | Feature::HOLD) : FeatureSet(Feature::ABSOLUTE_POSITION);
         c.limits.angle_max_mdeg = 100;
@@ -682,6 +683,16 @@ static void test_conformance() {
     Liar liar(true);     // only the HOLD claim is false
     CHECK(run_servo_conformance(honest, h, true) == 0);
     CHECK(run_servo_conformance(liar, h, true) != 0);
+    class RegisterLiar : public Liar {
+     public:
+      RegisterLiar() : Liar(false) {}
+      Capabilities get_capabilities() const override {
+        Capabilities c = Liar::get_capabilities();
+        c.features.set(Feature::REGISTER_ACCESS);  // claimed, but get_registers() stays null
+        return c;
+      }
+    } register_liar;
+    CHECK(run_servo_conformance(register_liar, h, true) != 0);
   }
 }
 

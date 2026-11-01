@@ -17,10 +17,10 @@ set(SERVOKIT_ROOT ${CMAKE_CURRENT_LIST_DIR}/..)
 add_library(servokit_host STATIC
   ${SERVOKIT_ROOT}/lib/serial/servo_controller.cpp
   ${SERVOKIT_ROOT}/lib/serial/servo_packet.cpp
-  ${SERVOKIT_ROOT}/lib/stseries/stseries_packet.cpp
-  ${SERVOKIT_ROOT}/lib/stseries/sts_servo.cpp
-  ${SERVOKIT_ROOT}/lib/stseries/sts_servo_family.cpp
-  ${SERVOKIT_ROOT}/lib/stseries/sts_servo_generic.cpp)
+  ${SERVOKIT_ROOT}/lib/families/stseries/stseries_packet.cpp
+  ${SERVOKIT_ROOT}/lib/families/stseries/sts_servo.cpp
+  ${SERVOKIT_ROOT}/lib/families/stseries/sts_servo_family.cpp
+  ${SERVOKIT_ROOT}/lib/families/stseries/sts_servo_generic.cpp)
 target_include_directories(servokit_host PUBLIC ${SERVOKIT_ROOT}/include)
 
 foreach(example example_generic example_family example_raw)
