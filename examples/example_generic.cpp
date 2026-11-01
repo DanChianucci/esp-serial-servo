@@ -20,17 +20,26 @@ static Result drive(Servo& servo) {
     return Result::UNSUPPORTED;
   }
 
-  // Put the servo into absolute-target mode.
-  Result r = servo.prepare();
+  // Select absolute-target mode.
+  Result r = servo.set_mode(MotionMode::ABSOLUTE_POSITION);
   if (r != Result::OK) return r;
 
-  // Speed, acceleration and torque for the moves that follow. Values are
-  // clamped to caps.limits by the implementation.
-  Profile profile;
-  profile.speed_mdeg_s = 90000;  // 90 deg/s
-  profile.accel_mdeg_s2 = 100000;
-  profile.torque_permille = 500;
-  r = servo.set_profile(profile);
+  // Configuration that must survive a power cycle is written inside a
+  // PersistScope; it relocks on every exit path of the block.
+  if (caps.features.has(Feature::PROTECT_TEMP) && caps.features.has(Feature::PERSIST_CONFIG)) {
+    PersistScope persist(servo);
+    if (!persist.ok()) return persist.result();
+    r = servo.set_protect_temperature(70);  // degrees C
+    if (r != Result::OK) return r;
+  }
+
+  // Speed, acceleration and torque for the moves that follow. Out-of-range
+  // values are rejected, never clamped: clamp to caps.limits first.
+  r = servo.set_speed(90000);  // 90 deg/s
+  if (r != Result::OK) return r;
+  r = servo.set_acceleration(100000);  // mdeg/s^2
+  if (r != Result::OK) return r;
+  r = servo.set_torque_limit(500);  // permille
   if (r != Result::OK) return r;
 
   r = servo.move_to(45000);  // 45 deg
@@ -46,20 +55,23 @@ static Result drive(Servo& servo) {
               static_cast<int>(t.current_ma), static_cast<int>(t.temperature_c), alarms);
   if (t.voltage_valid) std::printf("supply %u mV\n", static_cast<unsigned>(t.voltage_mv));
 
-  // Stop where the servo is now (read position, then command it).
-  return servo.hold();
+  // Cancel the move: the servo ends stationary with torque disabled.
+  return servo.cancel_motion();
 }
 
 int main() {
   // A scripted fake stands in for the UART: one reply per command, in order.
   servokit_test::FakeSerialPort port;
   const Bytes ack = reply(1);
-  for (int i = 0; i < 2 + 4 + 1; ++i) port.script_reply(ack);  // prepare, set_profile, move_to
+  // set_mode, unlock, set_protect_temperature, relock, set_speed,
+  // set_acceleration, set_torque_limit, move_to
+  for (int i = 0; i < 8; ++i) port.script_reply(ack);
   // Telemetry from register 0x38: position 512 steps, speed 0, load 100,
   // 120 (12.0 V), 31 C, no alarm, not moving, current 4 units (26 mA).
   port.script_reply(reply(1, {0x00, 0x02, 0x00, 0x00, 0x64, 0x00, 120, 31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00}));
-  port.script_reply(reply(1, {0x00, 0x02}));  // hold: position read
-  port.script_reply(ack);                     // hold: target write
+  port.script_reply(ack);                     // cancel_motion: torque off
+  port.script_reply(reply(1, {0x00, 0x02}));  // cancel_motion: position read
+  port.script_reply(ack);                     // cancel_motion: target write
 
   // The controller bounds every transaction: 20 ms to send plus 20 ms to
   // receive a reply. The STSServo borrows the controller, which borrows the port.
@@ -69,6 +81,6 @@ int main() {
   Servo& servo = sts;  // from here on the code is family-neutral
   const Result r = drive(servo);
   EXPECT(r == Result::OK);
-  EXPECT(port.tx_log().size() == 10);
+  EXPECT(port.tx_log().size() == 12);
   return failures() == 0 ? 0 : 1;
 }

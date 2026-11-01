@@ -15,6 +15,7 @@
 //      current        6.5 mA
 //      voltage        0.1 V
 //      protection time 10 ms
+//      overload limit 1 % of maximum torque
 //
 //    Rounding: conversions to native units round to nearest, halves away from
 //    zero. Conversions never saturate; the caller clamps to the register
@@ -94,6 +95,16 @@ constexpr int32_t ma_to_current_units(int32_t ma) {
 
 /** Raw voltage (0.1 V units) to mV. */
 constexpr uint32_t voltage_units_to_mv(uint32_t units) { return static_cast<uint32_t>(units * VOLTAGE_UNIT_MV); }
+
+/** mV to voltage units of 0.1 V, rounded. */
+constexpr uint32_t mv_to_voltage_units(uint32_t mv) {
+  return static_cast<uint32_t>(round_div(static_cast<int64_t>(mv), VOLTAGE_UNIT_MV));
+}
+
+/** Permille of full scale to percent (units of 1 %), rounded. */
+constexpr uint32_t permille_to_percent(uint32_t permille) {
+  return static_cast<uint32_t>(round_div(static_cast<int64_t>(permille), 10));
+}
 
 /** Milliseconds to protection time units of 10 ms, rounded. */
 constexpr uint32_t ms_to_time_units(uint32_t ms) {

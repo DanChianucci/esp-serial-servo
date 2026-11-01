@@ -6,8 +6,14 @@
 //  - an operation whose feature is absent returns UNSUPPORTED and sends nothing;
 //  - an operation whose feature is present succeeds when the bus answers;
 //  - move_to outside the declared domain returns OUT_OF_RANGE and sends nothing;
-//  - read_telemetry, read_alarms, hold, set_protection and set_profile fail
-//    when any one of their transactions fails (writes stop at the first failure), and read_telemetry leaves its output untouched;
+//  - each protection and motion-parameter setter (set_protect_*, set_speed,
+//    set_acceleration, set_torque_limit, set_start_torque) is UNSUPPORTED exactly
+//    when its own feature is absent, independent of the others;
+//  - cancel_motion and the torque-enable calls agree with their features;
+//    set_mode is either implemented or UNSUPPORTED with nothing sent;
+//  - read_telemetry, read_alarms, cancel_motion and the multi-write setters fail
+//    when any one of their transactions fails (writes stop at the first failure),
+//    and read_telemetry leaves its output untouched;
 //  - null output pointers return PARAM;
 //  - set_persist agrees with Feature::PERSIST_CONFIG;
 //  - get_registers() is non-null exactly when Feature::REGISTER_ACCESS is set,
@@ -31,14 +37,22 @@
 namespace servokit_test {
 
 enum class ConformanceOp {
-  PING,
-  READ_IDENTITY,
-  PREPARE,
-  SET_PROTECTION,
-  SET_PROFILE,
+  PROBE,
+  IDENTIFY,
+  SET_MODE,
+  SET_PROTECT_CURRENT,
+  SET_PROTECT_OVERLOAD,
+  SET_PROTECT_TEMPERATURE,
+  SET_PROTECT_VOLTAGE,
+  SET_PROTECT_RELEASE_ALARMS,
+  SET_SPEED,
+  SET_ACCELERATION,
+  SET_TORQUE_LIMIT,
+  SET_START_TORQUE,
   MOVE_TO,
-  HOLD,
-  SET_TORQUE,
+  CANCEL_MOTION,
+  SET_TORQUE_ENABLED,
+  READ_TORQUE_ENABLED,
   SET_PERSIST,
   READ_TELEMETRY,
   READ_ALARMS,
@@ -84,24 +98,16 @@ inline int run_servo_conformance(servokit::Servo& s, const ConformanceHooks& h, 
   CONF_CHECK(!f.has(Feature::READ_CURRENT) || l.current_max_ma > l.current_min_ma);
   CONF_CHECK(f.has(Feature::READ_ALARMS) == l.reportable_alarms.any());
 
-  const bool has_protection =
-      f.has_any(Feature::PROTECT_CURRENT | Feature::PROTECT_OVERLOAD | Feature::PROTECT_TEMP |
-                Feature::PROTECT_VOLTAGE | Feature::PROTECT_RELEASE_ON_ALARM);
-  const bool has_profile =
-      f.has_any(Feature::SET_SPEED | Feature::SET_ACCEL | Feature::TORQUE_LIMIT | Feature::START_TORQUE);
   const bool has_telemetry =
       f.has_any(Feature::READ_POSITION | Feature::READ_CURRENT | Feature::READ_TEMPERATURE | Feature::READ_ALARMS);
 
-  Profile profile;
-  profile.speed_mdeg_s = l.max_speed_mdeg_s / 2;
-  profile.accel_mdeg_s2 = l.max_accel_mdeg_s2 / 2;
-  profile.torque_permille = l.max_torque_permille / 2;
-  profile.start_torque_permille = l.max_torque_permille / 10;
-  Protection protection;
-  protection.stall_current_ma = 1000;
-  protection.stall_time_ms = 500;
-  protection.max_temperature_c = 60;
-  protection.release_on_alarm = Alarm::OVER_TEMPERATURE | Alarm::OVER_CURRENT;
+  // Mid-range arguments every family can hold.
+  const uint32_t speed = l.max_speed_mdeg_s / 2;
+  const uint32_t accel = l.max_accel_mdeg_s2 / 2;
+  const uint16_t torque = static_cast<uint16_t>(l.max_torque_permille / 2);
+  const uint16_t start_torque = static_cast<uint16_t>(l.max_torque_permille / 10);
+  const AlarmSet release = Alarm::OVER_TEMPERATURE | Alarm::OVER_CURRENT;
+  bool torque_enabled = false;
   Identity identity;
   Telemetry telemetry;
   AlarmSet alarms;
@@ -128,13 +134,13 @@ inline int run_servo_conformance(servokit::Servo& s, const ConformanceHooks& h, 
   CONF_CHECK(link == nullptr || link->get_verify_checksum());
   RegisterAccess* const regs = reg_ptr != nullptr ? reg_ptr : &no_registers;
 
-  // prepare() has no feature flag: a family either implements it or returns
+  // set_mode() has no feature flag: a family either implements it or returns
   // UNSUPPORTED without sending anything.
   h.reset();
-  h.script(ConformanceOp::PREPARE, -1);
-  const Result prepared = s.prepare();
-  CONF_CHECK(prepared == Result::OK || (prepared == Result::UNSUPPORTED && h.frames_sent() == 0));
-  const bool has_prepare = prepared == Result::OK;
+  h.script(ConformanceOp::SET_MODE, -1);
+  const Result moded = s.set_mode(MotionMode::ABSOLUTE_POSITION);
+  CONF_CHECK(moded == Result::OK || (moded == Result::UNSUPPORTED && h.frames_sent() == 0));
+  const bool has_mode = moded == Result::OK;
 
   // Each case runs one operation with its scripted bus; supported says whether
   // the capabilities promise it.
@@ -144,14 +150,29 @@ inline int run_servo_conformance(servokit::Servo& s, const ConformanceHooks& h, 
     std::function<Result()> call;
   };
   const Case cases[] = {
-      {ConformanceOp::PING, f.has(Feature::PING), [&] { return s.probe(); }},
-      {ConformanceOp::READ_IDENTITY, f.has(Feature::READ_IDENTITY), [&] { return s.identify(&identity); }},
-      {ConformanceOp::PREPARE, has_prepare, [&] { return s.prepare(); }},
-      {ConformanceOp::SET_PROTECTION, has_protection, [&] { return s.set_protection(protection); }},
-      {ConformanceOp::SET_PROFILE, has_profile, [&] { return s.set_profile(profile); }},
+      {ConformanceOp::PROBE, f.has(Feature::PROBE), [&] { return s.probe(); }},
+      {ConformanceOp::IDENTIFY, f.has(Feature::IDENTIFY), [&] { return s.identify(&identity); }},
+      {ConformanceOp::SET_MODE, has_mode, [&] { return s.set_mode(MotionMode::ABSOLUTE_POSITION); }},
+      {ConformanceOp::SET_PROTECT_CURRENT, f.has(Feature::PROTECT_CURRENT),
+       [&] { return s.set_protect_current(1000, 500); }},
+      {ConformanceOp::SET_PROTECT_OVERLOAD, f.has(Feature::PROTECT_OVERLOAD),
+       [&] { return s.set_protect_overload(500, 500); }},
+      {ConformanceOp::SET_PROTECT_TEMPERATURE, f.has(Feature::PROTECT_TEMP),
+       [&] { return s.set_protect_temperature(60); }},
+      {ConformanceOp::SET_PROTECT_VOLTAGE, f.has(Feature::PROTECT_VOLTAGE),
+       [&] { return s.set_protect_voltage(6000, 8400); }},
+      {ConformanceOp::SET_PROTECT_RELEASE_ALARMS, f.has(Feature::PROTECT_RELEASE_ON_ALARM),
+       [&] { return s.set_protect_release_alarms(release); }},
+      {ConformanceOp::SET_SPEED, f.has(Feature::SET_SPEED), [&] { return s.set_speed(speed); }},
+      {ConformanceOp::SET_ACCELERATION, f.has(Feature::SET_ACCEL), [&] { return s.set_acceleration(accel); }},
+      {ConformanceOp::SET_TORQUE_LIMIT, f.has(Feature::TORQUE_LIMIT), [&] { return s.set_torque_limit(torque); }},
+      {ConformanceOp::SET_START_TORQUE, f.has(Feature::START_TORQUE),
+       [&] { return s.set_start_torque(start_torque); }},
       {ConformanceOp::MOVE_TO, true, [&] { return s.move_to(0); }},
-      {ConformanceOp::HOLD, f.has(Feature::HOLD), [&] { return s.hold(); }},
-      {ConformanceOp::SET_TORQUE, f.has(Feature::TORQUE_ENABLE), [&] { return s.set_torque(true); }},
+      {ConformanceOp::CANCEL_MOTION, f.has(Feature::CANCEL_MOTION), [&] { return s.cancel_motion(); }},
+      {ConformanceOp::SET_TORQUE_ENABLED, f.has(Feature::TORQUE_ENABLE), [&] { return s.set_torque_enabled(true); }},
+      {ConformanceOp::READ_TORQUE_ENABLED, f.has(Feature::TORQUE_ENABLE),
+       [&] { return s.read_torque_enabled(&torque_enabled); }},
       {ConformanceOp::SET_PERSIST, f.has(Feature::PERSIST_CONFIG), [&] { return s.set_persist(true); }},
       {ConformanceOp::READ_TELEMETRY, has_telemetry, [&] { return s.read_telemetry(&telemetry); }},
       {ConformanceOp::READ_ALARMS, f.has(Feature::READ_ALARMS), [&] { return s.read_alarms(&alarms); }},
@@ -251,21 +272,25 @@ inline int run_servo_conformance(servokit::Servo& s, const ConformanceHooks& h, 
     CONF_CHECK(s.read_telemetry(nullptr) == Result::PARAM);
     CONF_CHECK(h.frames_sent() == 0);
   }
-  if (f.has(Feature::HOLD)) {
-    fails_at_every_transaction(ConformanceOp::HOLD, [&] { return s.hold(); }, [] {});
+  if (f.has(Feature::CANCEL_MOTION)) {
+    fails_at_every_transaction(ConformanceOp::CANCEL_MOTION, [&] { return s.cancel_motion(); }, [] {});
   }
-  if (has_protection) {
-    fails_at_every_transaction(ConformanceOp::SET_PROTECTION, [&] { return s.set_protection(protection); }, [] {});
+  // Setters made of several writes stop at the first failure.
+  for (const Case& c : cases) {
+    const bool setter = c.op >= ConformanceOp::SET_PROTECT_CURRENT && c.op <= ConformanceOp::SET_START_TORQUE;
+    if (setter && c.supported) fails_at_every_transaction(c.op, c.call, [] {});
   }
-  if (has_profile) {
-    fails_at_every_transaction(ConformanceOp::SET_PROFILE, [&] { return s.set_profile(profile); }, [] {});
+  if (f.has(Feature::TORQUE_ENABLE)) {
+    h.reset();
+    CONF_CHECK(s.read_torque_enabled(nullptr) == Result::PARAM);
+    CONF_CHECK(h.frames_sent() == 0);
   }
   if (f.has(Feature::READ_ALARMS)) {
     fails_at_every_transaction(ConformanceOp::READ_ALARMS, [&] { return s.read_alarms(&alarms); }, [] {});
     h.reset();
     CONF_CHECK(s.read_alarms(nullptr) == Result::PARAM);
   }
-  if (f.has(Feature::READ_IDENTITY)) {
+  if (f.has(Feature::IDENTIFY)) {
     h.reset();
     CONF_CHECK(s.identify(nullptr) == Result::PARAM);
   }

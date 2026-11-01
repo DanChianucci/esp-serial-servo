@@ -255,7 +255,11 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
   /** Reads REG_RESPONSE_MODE. @param[out] mode Written on OK only. */
   Result get_response_mode(STS::rsp_mode_t* mode);
   /** Sets REG_RESPONSE_MODE. With RSP_READ_PING the servo stops answering
-   *  writes, so later write calls return TIMEOUT. */
+   *  writes, so later write calls return TIMEOUT even though the write took
+   *  effect. The firmware adapter must call set_response_mode(STS::RSP_ALL) at
+   *  boot so that every later write is acknowledged; no generic Servo call
+   *  does it. From RSP_READ_PING the call itself returns TIMEOUT (its write
+   *  took effect), so a second call confirms it. */
   Result set_response_mode(STS::rsp_mode_t mode);
   /** Reads REG_RESPONSE_DELAY. @param[out] delay_2us Units of 2 us. */
   Result get_response_delay(uint8_t* delay_2us);
@@ -269,20 +273,13 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
   Result set_servo_enabled(bool enabled);
 
   /** Writes REG_CTRL_ACCEL (SRAM). @param accel 0..MAX_ACCELERATION, units of 100 steps/s^2. */
-  Result set_acceleration(uint8_t accel);
+  Result set_acceleration_units(uint8_t accel);
   /** Writes REG_CTRL_SPEED as an unsigned magnitude (SRAM), the speed used by
    *  position moves. @param steps_per_s 0..MAX_SPEED. */
-  Result set_speed(uint16_t steps_per_s);
+  Result set_speed_steps(uint16_t steps_per_s);
   /** Writes REG_CTRL_SPEED as sign-magnitude (bit 15 = reverse) for constant
    *  speed mode (SRAM). @param steps_per_s -MAX_SPEED..MAX_SPEED. */
   Result set_signed_speed(int32_t steps_per_s);
-  /** Writes REG_CTRL_TORQUE (SRAM), the runtime torque limit.
-   *  @param torque 0..MAX_TORQUE, units of 0.1 %. Reloaded from the stored
-   *  maximum torque at power-up. */
-  Result set_torque_limit(uint16_t torque);
-  /** Writes REG_START_TORQUE, the minimum starting torque.
-   *  @param torque 0..MAX_TORQUE, units of 0.1 %. */
-  Result set_start_torque(uint16_t torque);
 
   /** Writes REG_CTRL_POS (SRAM) as sign-magnitude (bit 15 = negative).
    *  @param steps -MAX_TARGET_POSITION..MAX_TARGET_POSITION, 4096 steps per
@@ -367,8 +364,18 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
   // Built on the register helpers above. Angles use 4096 steps per revolution
   // (87.890625 mdeg/step). Every write is performed as given: no operation
   // here reads before writing, compares, or changes REG_EEPROM_LOCK; the
-  // caller sequences set_persist() around configuration writes. Atomic
-  // telemetry reads and the position read of hold() are the only reads.
+  // caller sequences set_persist() (or PersistScope) around configuration
+  // writes. The atomic telemetry reads, read_torque_enabled() and the position
+  // read of cancel_motion() are the only reads.
+  //
+  // Conversions to native units round to nearest, halves away from zero (see
+  // sts_units.h). Arguments are validated before anything is sent: a value
+  // that does not fit the register returns OUT_OF_RANGE and nothing is written
+  // or clamped. A setter with several writes stops at the first failure and
+  // returns its Result; earlier writes of that call may have taken effect.
+  //
+  // Boot: the firmware adapter must call set_response_mode(STS::RSP_ALL) once
+  // after power-up so that writes are acknowledged. No generic call does it.
 
   /** Absolute move: converts @p angle_mdeg to steps (rounded to nearest) and
    *  writes REG_CTRL_POS once.
@@ -380,9 +387,10 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
    *  depend on identify(). Features are those the generic operations
    *  below perform. The current range is the reportable range: the largest
    *  magnitude of the 15-bit current feedback, so a telemetry sample never lies
-   *  outside it. The range a stall-current threshold may be set to is narrower
-   *  (MAX_CURRENT_LIMIT units); set_protection() rejects larger values. Not asserted because they are unverified on hardware:
-   *  MULTI_TURN_POS and RETAINS_POSITION_UNPOWERED. The domain is the
+   *  outside it. The range a current threshold may be set to is narrower
+   *  (MAX_CURRENT_LIMIT units); set_protect_current() rejects larger values.
+   *  Not asserted because they are unverified on hardware: MULTI_TURN_POS and
+   *  RETAINS_POSITION_UNPOWERED. The domain is the
    *  -MAX_TARGET_POSITION..MAX_TARGET_POSITION steps; resolution_mdeg is the step size
    *  87.890625 mdeg rounded to 88. */
   Capabilities get_capabilities() const override;
@@ -391,49 +399,101 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
    *  transaction. The device ID is the value stored in the servo. */
   Result identify(Identity* out) override;
 
-  /** Writes REG_RESPONSE_MODE = RSP_ALL, then REG_OPERATION_MODE = OP_SERVO
-   *  (position mode). That position mode is the right one for the
-   *  generic operations is not verified on hardware. Two plain writes, no reads. If the servo was in RSP_READ_PING
-   *  its reply to the first write is missing: that write takes effect but
-   *  TIMEOUT is returned and the second write is not sent; call again. */
-  Result prepare() override;
+  /** MotionMode::ABSOLUTE_POSITION writes REG_OPERATION_MODE = OP_SERVO (one
+   *  plain write, no reads). Hardware has not confirmed that OP_SERVO is the
+   *  right mode for the generic operations. Any other value returns
+   *  OUT_OF_RANGE and sends nothing. */
+  Result set_mode(MotionMode mode) override;
 
-  /** Programs stall_current_ma into REG_OVERCURR_THRESH (6.5 mA units),
-   *  stall_time_ms into REG_OVERCURR_TIME (10 ms units), max_temperature_c
-   *  into REG_OVERTEMP_THRESH and release_on_alarm into REG_UNLOAD_ALARM_MASK.
-   *  All values are validated first; any value that does not fit a register,
-   *  or an alarm with no native bit (STALLED, COMMUNICATION, UNLOADED, OTHER),
-   *  returns OUT_OF_RANGE and sends nothing. Values are never clamped because
-   *  that would silently weaken a threshold. Zero is written as given.
-   *  Overload and voltage thresholds are not part of Protection and are not
-   *  written. OVER_VOLTAGE and UNDER_VOLTAGE share one native bit (the servo
-   *  does not distinguish them), so requesting either releases torque on both.
-   *  Four plain writes, no reads; stops at the first failure. The
-   *  units and the meaning of the thresholds are unverified on hardware. */
-  Result set_protection(const Protection& protection) override;
+  /** Writes REG_OVERCURR_THRESH then REG_OVERCURR_TIME.
+   *  @param ma Converted to units of 6.5 mA; at most MAX_CURRENT_LIMIT units
+   *         (3322 mA). Values above INT32_MAX mA are OUT_OF_RANGE.
+   *  @param time_ms Converted to units of 10 ms; at most MAX_PROTECTION_TIME
+   *         units (2540 ms).
+   *  Zero is written as given. Units and trip behaviour are unverified on
+   *  hardware. */
+  Result set_protect_current(uint32_t ma, uint32_t time_ms) override;
 
-  /** Writes REG_CTRL_TORQUE, REG_START_TORQUE, REG_CTRL_ACCEL, REG_CTRL_SPEED
-   *  (in that order, one plain write each, no reads). Speed, acceleration and
-   *  torques are clamped to get_capabilities().limits and converted to native
-   *  units. REG_START_TORQUE is an EEPROM-region register, so it follows the
-   *  lock state. Stops at the first failure. */
-  Result set_profile(const Profile& profile) override;
+  /** Writes REG_OVERLOAD_THRESH then REG_OVERLOAD_TIME.
+   *  @param permille Converted to percent of maximum torque (the register
+   *         unit), rounded to nearest, at most 1000 permille (so a value below
+   *         5 permille writes 0, whose meaning is unverified).
+   *  @param time_ms Converted to units of 10 ms; at most MAX_PROTECTION_TIME
+   *         units (2540 ms).
+   *  The register units (percent of maximum torque, 10 ms) come from the
+   *  register map; the meaning of the threshold relative to the load
+   *  feedback is unverified on hardware. */
+  Result set_protect_overload(uint16_t permille, uint32_t time_ms) override;
 
-  /** Reads REG_POSITION, then writes it as the target (REG_CTRL_POS), so the
-   *  servo stops where it is. Torque must already be enabled. Two transactions.
-   *  Returns the failing sub-operation's error; get_hold_failed_step() says which.
-   *  A position read outside -MAX_TARGET_POSITION..MAX_TARGET_POSITION returns
-   *  OUT_OF_RANGE with POSITION_OUT_OF_DOMAIN and nothing is written.
-   *  A servo that reports an alarm in its status byte still yields its
-   *  position. Never reports OK for a write that was not acknowledged. */
-  Result hold() override;
+  /** Writes REG_OVERTEMP_THRESH. @param c 0..MAX_TEMPERATURE_LIMIT degC. */
+  Result set_protect_temperature(int16_t c) override;
 
-  /** Sub-operation that failed in the most recent hold(). */
-  enum class HoldStep : uint8_t { NONE, READ_POSITION, POSITION_OUT_OF_DOMAIN, WRITE_TARGET };
-  HoldStep get_hold_failed_step() const { return m_hold_step; }
+  /** Writes REG_UNDERVOLT_THRESH (@p min_mv) then REG_OVERVOLT_THRESH
+   *  (@p max_mv).
+   *  @param min_mv Converted to units of 0.1 V, rounded to nearest; at most
+   *         MAX_VOLTAGE_LIMIT units (25.4 V).
+   *  @param max_mv Same conversion and range. A @p min_mv above @p max_mv is
+   *         OUT_OF_RANGE.
+   *  Register units come from the register map; the behaviour at the
+   *  thresholds is unverified on hardware. */
+  Result set_protect_voltage(uint32_t min_mv, uint32_t max_mv) override;
 
-  /** Writes REG_SERVO_EN (true = torque on). */
-  Result set_torque(bool enable) override;
+  /** Writes REG_UNLOAD_ALARM_MASK from @p alarms. An alarm with no native bit
+   *  (STALLED, COMMUNICATION, UNLOADED, OTHER) returns OUT_OF_RANGE and
+   *  nothing is written. OVER_VOLTAGE and UNDER_VOLTAGE share one native bit
+   *  (the servo does not distinguish them), so requesting either releases
+   *  torque on both. The empty set writes 0. */
+  Result set_protect_release_alarms(AlarmSet alarms) override;
+
+  /** Writes REG_CTRL_SPEED (SRAM) as an unsigned magnitude.
+   *  @param mdeg_s Converted to steps/s, rounded to nearest; at most
+   *         MAX_SPEED steps/s (limits.max_speed_mdeg_s). */
+  Result set_speed(uint32_t mdeg_s) override;
+
+  /** Writes REG_CTRL_ACCEL (SRAM).
+   *  @param mdeg_s2 Converted to units of 100 steps/s^2, rounded to nearest; at
+   *         most MAX_ACCELERATION units (limits.max_accel_mdeg_s2). */
+  Result set_acceleration(uint32_t mdeg_s2) override;
+
+  /** Writes REG_CTRL_TORQUE (SRAM), the runtime torque limit; reloaded from the
+   *  stored maximum torque at power-up.
+   *  @param permille 0..MAX_TORQUE (the register unit, 0.1 %, equals permille). */
+  Result set_torque_limit(uint16_t permille) override;
+
+  /** Writes REG_START_TORQUE, the minimum starting torque (EEPROM region: it
+   *  follows the lock state).
+   *  @param permille 0..MAX_TORQUE. */
+  Result set_start_torque(uint16_t permille) override;
+
+  /** Disables torque, reads REG_POSITION, then writes that position as the
+   *  target (REG_CTRL_POS): three transactions. Torque is disabled first so the
+   *  position read is the resting position and enabling torque later cannot
+   *  lurch to the old target. Torque need not be on beforehand.
+   *  On OK the servo is stationary, its target equals its position and torque
+   *  is DISABLED. The servo is unpowered between the torque-off and the end of
+   *  the sequence, and nothing restores torque: call set_torque_enabled(true)
+   *  afterwards if wanted.
+   *  Failure: the failing transaction's error is returned and
+   *  get_cancel_failed_step() says which step failed. If a step after the
+   *  torque-off fails, torque stays disabled. If the torque-off itself fails
+   *  (including an unacknowledged write), the torque state is unknown. A
+   *  position read outside -MAX_TARGET_POSITION..MAX_TARGET_POSITION returns
+   *  OUT_OF_RANGE with POSITION_OUT_OF_DOMAIN and no target is written. A servo
+   *  that reports an alarm in its status byte still yields its position. Never
+   *  reports OK for a write that was not acknowledged. */
+  Result cancel_motion() override;
+
+  /** Step that failed in the most recent cancel_motion(). */
+  enum class CancelStep : uint8_t { NONE, DISABLE_TORQUE, READ_POSITION, POSITION_OUT_OF_DOMAIN, WRITE_TARGET };
+  /** @return NONE after a successful cancel_motion(), otherwise the failed
+   *  step. Does not touch the bus. */
+  CancelStep get_cancel_failed_step() const { return m_cancel_step; }
+
+  /** set_servo_enabled(). */
+  Result set_torque_enabled(bool enable) override;
+
+  /** get_servo_enabled(). @param[out] out Written on OK only; null is PARAM. */
+  Result read_torque_enabled(bool* out) override;
 
   /** One atomic sample from a single 15-byte read of REG_POSITION..REG_CURRENT.
    *  Filled on OK only; any transport error, short reply or undecodable field
@@ -459,7 +519,7 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
   uint8_t m_id;
   uint8_t m_last_status = 0;
   bool m_readback_check = false;
-  HoldStep m_hold_step = HoldStep::NONE;
+  CancelStep m_cancel_step = CancelStep::NONE;
 };
 
 }  // namespace servokit
