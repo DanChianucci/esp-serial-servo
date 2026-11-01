@@ -273,10 +273,10 @@ class STSServo : public Servo, public RegisterAccess, public SerialLink {
   Result set_servo_enabled(bool enabled);
 
   /** Writes REG_CTRL_ACCEL (SRAM). @param accel 0..MAX_ACCELERATION, units of 100 steps/s^2. */
-  Result set_acceleration_units(uint8_t accel);
+  Result set_acceleration_native(uint8_t accel);
   /** Writes REG_CTRL_SPEED as an unsigned magnitude (SRAM), the speed used by
    *  position moves. @param steps_per_s 0..MAX_SPEED. */
-  Result set_speed_steps(uint16_t steps_per_s);
+  Result set_speed_native(uint16_t steps_per_s);
   /** Writes REG_CTRL_SPEED as sign-magnitude (bit 15 = reverse) for constant
    *  speed mode (SRAM). @param steps_per_s -MAX_SPEED..MAX_SPEED. */
   Result set_signed_speed(int32_t steps_per_s);
