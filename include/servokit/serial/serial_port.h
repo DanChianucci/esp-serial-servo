@@ -42,35 +42,46 @@ class SerialPort {
    */
   virtual srv_stat_t discard_input()=0;
 
-  /** Block until all tx data has been transmitted
-   *  @param timeout Timeout in ticks
-   * @return SRV_OK on success.
-   * @return SRV_TIMEOUT on timeout.
+  /** Block until all tx data has been transmitted.
+   *  @param timeout Longest time to wait, as a duration. Zero or negative
+   *         still checks once without blocking.
+   *  @return SRV_OK when transmission is complete.
+   *  @return SRV_TIMEOUT if it is not complete when the time has passed.
+   *  @return SRV_FAIL on a driver error.
    */
   virtual srv_stat_t flush_output(timeout_duration_t timeout)=0;
 
-  /** Read bytes from the bus, block until pattern is found or timeout expires.
-   *  @param pattern buffer containing the the sync pattern
-   *  @param timeout Timeout in ticks to wait for the sync operation to complete.
-   *  @return SRV_OK on success.
-   *  @return SRV_TIMEOUT if sync not found.
+  /** Read bytes from the bus, block until the pattern is found or the time
+   *  expires. Bytes before and including the pattern are consumed.
+   *  @param pattern The sync pattern; at most SyncMatcher::MAX_PATTERN bytes.
+   *  @param timeout Longest total time to wait, as a duration. Zero or
+   *         negative still makes one non-blocking read attempt.
+   *  @return SRV_OK when the pattern was read.
+   *  @return SRV_TIMEOUT if it was not found in time.
+   *  @return SRV_PARAM_ERR if the pattern is longer than the maximum.
+   *  @return SRV_READ_FAIL on a driver error.
    */
   virtual srv_stat_t read_sync(const buffer_const_t pattern, timeout_duration_t timeout)=0;
 
-  /** Read bytes from the bus, block until the bytes are read or timeout expires.
+  /** Read bytes from the bus, block until the buffer is full or the time
+   *  expires.
    *  @param data The buffer where the read data will be stored.
-   *  @param timeout Timeout in ticks to wait for the read operation to complete.
-   *  @return The number of bytes read.
+   *  @param timeout Longest total time to wait, as a duration. Zero or
+   *         negative still makes one non-blocking read attempt.
+   *  @return The number of bytes read (fewer than requested, possibly 0, if
+   *          the time expired first).
    *  @return SRV_READ_FAIL on error.
    */
   virtual srv_result_t read_bytes(const buffer_t data, timeout_duration_t timeout)=0;
 
-  /** Write bytes to the bus, block until the bytes are written or timeout expires.
+  /** Write bytes to the bus.
    *  @param data buffer to write.
-   *  @param timeout Timeout in ticks or 0 for non-blocking
-   *  @return The number of bytes written.
+   *  @param timeout Longest time to wait for the bytes to be transmitted, as
+   *         a duration. Implementations document whether the hand-off of the
+   *         bytes to the transport is also bounded by it.
+   *  @return The number of bytes accepted for transmission.
    *  @return SRV_WRITE_FAIL on error.
-   *  @return SRV_TIMEOUT on timeout.
+   *  @return SRV_TIMEOUT if transmission is not complete in time.
    */
   virtual srv_result_t write_bytes(const buffer_const_t, timeout_duration_t timeout = timeout_duration_t::max())=0;
 

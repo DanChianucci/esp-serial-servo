@@ -109,3 +109,6 @@ They are built and run with the host tests (`tests/host/CMakeLists.txt`).
 - **Not thread-safe.** Serialize all calls per bus.
 - **Hardware status.** Items the code marks as not verified on hardware are
   collected in the [hardware-verification list](api.md#hardware-verification-list).
+  This includes `ESPSerialPort`: `lib/platform/esp_idf.cpp` is not built or run
+  by the host tests, and its timeout behaviour is not verified on ESP-IDF
+  hardware.

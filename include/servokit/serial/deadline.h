@@ -41,7 +41,9 @@ class BasicDeadline {
  private:
   static time_point compute(duration timeout, time_point start) {
     if (timeout <= duration::zero()) return start;
-    if (timeout > time_point::max() - start) return time_point::max();
+    // For a start before the clock epoch, start + timeout cannot overflow
+    // (the sum lies between start and timeout), whereas max() - start could.
+    if (start >= time_point{} && timeout > time_point::max() - start) return time_point::max();
     return start + timeout;
   }
 
@@ -61,15 +63,16 @@ constexpr uint32_t ceil_ms(Duration d) {
   return static_cast<uint32_t>(ceil<milliseconds>(d).count());
 }
 
-/** Converts a duration to RTOS ticks, rounding up so a wait never ends before
- *  the requested time (it can overrun by less than one tick).
+/** Converts milliseconds to RTOS ticks, rounding up so a wait never ends
+ *  before the requested time (it can overrun by less than one tick).
+ *  The result is ceil(ms * tick_rate_hz / 1000), computed in 64 bits.
  *  @param ms Milliseconds to convert (see ceil_ms()).
- *  @param tick_period_ms Length of one tick in milliseconds, at least 1.
+ *  @param tick_rate_hz RTOS tick rate in Hz; 0 is treated as 1.
  *  @param max_ticks Saturation limit for the result.
  */
-constexpr uint32_t ceil_ticks(uint32_t ms, uint32_t tick_period_ms, uint32_t max_ticks) {
-  if (tick_period_ms == 0) tick_period_ms = 1;
-  uint64_t ticks = (static_cast<uint64_t>(ms) + tick_period_ms - 1) / tick_period_ms;
+constexpr uint32_t ceil_ticks(uint32_t ms, uint32_t tick_rate_hz, uint32_t max_ticks) {
+  if (tick_rate_hz == 0) tick_rate_hz = 1;
+  uint64_t ticks = (static_cast<uint64_t>(ms) * tick_rate_hz + 999) / 1000;
   return ticks > max_ticks ? max_ticks : static_cast<uint32_t>(ticks);
 }
 

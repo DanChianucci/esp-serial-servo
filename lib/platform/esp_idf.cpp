@@ -6,17 +6,19 @@
 #include <soc/uart_periph.h>
 
 #include "servokit/serial/servo_internal.h"
+#include "servokit/serial/sync_matcher.h"
 
 namespace servokit {
 using namespace timeout;
 
 namespace {
-/** Converts the time left on a deadline to a tick count for the UART driver.
- *  Rounds up (the wait never ends early; it can overrun by less than one tick)
- *  and stays below portMAX_DELAY, which would mean "wait forever". Callers
- *  re-check the deadline after each wait, so the saturated value is safe. */
+/** Converts the time left on a deadline to a tick count for the UART driver:
+ *  ceil(ms * configTICK_RATE_HZ / 1000), so the wait never ends early (it can
+ *  overrun by less than one tick). The result stays below portMAX_DELAY, which
+ *  would mean "wait forever"; callers re-check the deadline after each wait,
+ *  so the saturated value is safe. */
 TickType_t remaining_ticks(const Deadline& deadline) {
-  return ceil_ticks(ceil_ms(deadline.remaining()), portTICK_PERIOD_MS, portMAX_DELAY - 1);
+  return ceil_ticks(ceil_ms(deadline.remaining()), configTICK_RATE_HZ, portMAX_DELAY - 1);
 }
 }  // namespace
 
@@ -142,22 +144,18 @@ srv_stat_t ESPSerialPort::flush_output(timeout_duration_t timeout) {
 }
 
 srv_stat_t ESPSerialPort::read_sync(const buffer_const_t pattern, timeout_duration_t timeout) {
-  const Deadline deadline(timeout);
-  size_t match_index = 0;
+  SyncMatcher matcher;
+  SRV_RETURN_IF(!matcher.reset(pattern), SRV_PARAM_ERR);
+  if (matcher.complete()) return SRV_OK;
 
+  const Deadline deadline(timeout);
   uint8_t byte[1];
-  while (match_index < pattern.size()) {
+  do {
     srv_result_t result = read_bytes(buffer_t(byte), deadline.remaining());
     SRV_RETURN_ON_ERR(result);
-    if (get_value(result) > 0) {
-      if (*byte == pattern[match_index])
-        match_index++;
-      else
-        match_index = (*byte == pattern[0]) ? 1 : 0;
-    }
-    if (match_index < pattern.size()) SRV_RETURN_IF(deadline.expired(), SRV_TIMEOUT);
-  }
-  return SRV_OK;
+    if (get_value(result) > 0 && matcher.feed(*byte)) return SRV_OK;
+  } while (!deadline.expired());
+  return SRV_TIMEOUT;
 }
 
 srv_result_t ESPSerialPort::read_bytes(const buffer_t data, timeout_duration_t timeout) {
