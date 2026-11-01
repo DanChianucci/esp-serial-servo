@@ -35,7 +35,9 @@
 //                same span is sent and each byte is compared with the byte
 //                written, through that byte's compare mask (see verify_rule()).
 //                The read is addressed to the written ID, except that a write
-//                covering REG_DEVICE_ID reads from the newly written ID.
+//                covering REG_DEVICE_ID reads from the newly written ID. When
+//                that ID is above STS::MAX_ID (0xFC) the servo cannot be
+//                addressed, so nothing is read back and the write returns OK.
 //      Scope     Done once in write_register(), so write_u8(), write_u16(),
 //                write_raw(), every typed helper and every generic operation
 //                that writes are verified alike. Exactly one extra read frame
@@ -90,9 +92,11 @@
 //                0x25 1 SPEED_COEF_P        STABLE
 //                0x26 1 OVERCURR_TIME       STABLE
 //                0x27 1 SPEED_COEF_I        STABLE
-//                0x28 1 SERVO_EN            STABLE_MASKED, bit 0 only (the
-//                                           calibration value 128 is a command
-//                                           and is not stored)
+//                0x28 1 SERVO_EN            VOLATILE (a protection trip can
+//                                           clear it, and the calibration value
+//                                           128 is a command that may read back
+//                                           differently; torque-enable writes
+//                                           are never read back)
 //                0x29 1 CTRL_ACCEL          VOLATILE
 //                0x2A 2 CTRL_POS            VOLATILE
 //                0x2C 2 CTRL_PWM            VOLATILE
@@ -107,8 +111,9 @@
 //                returns OUT_OF_RANGE and sends nothing.
 //      Units     Native register units, stated per helper.
 //      Writes    Every setter performs exactly one register write (plus the
-//                verification read when enabled) and returns its Result. No setter reads first, compares, or
-//                touches REG_EEPROM_LOCK. The one exception is
+//                verification read when enabled) and returns its Result. No setter reads before it writes
+//                or touches REG_EEPROM_LOCK; with write verification enabled,
+//                the write is followed by a single read-back and compare. The one exception is
 //                set_multiturn_feedback(), which reads REG_PHASE first because
 //                only one bit of that byte may change.
 //      EEPROM    Whether a configuration write survives a power cycle is
@@ -157,8 +162,6 @@ class STSServo : public Servo {
    *  the bit meanings; the excluded bits are those community documentation
    *  assigns to behaviour the servo may rewrite, unverified on hardware. */
   static constexpr uint8_t PHASE_VERIFY_MASK = 0xFF & ~((1 << 3) | (1 << 6));
-  /** REG_SERVO_EN bits compared by write verification: bit 0 (torque on/off). */
-  static constexpr uint8_t SERVO_EN_VERIFY_MASK = 0x01;
 
   /** How write verification treats a register byte. */
   enum class VerifyClass : uint8_t {

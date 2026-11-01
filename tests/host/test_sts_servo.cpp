@@ -294,9 +294,12 @@ static void test_verify_failures() {
   CHECK(r.servo.write_u8(1, STS::REG_POS_COEF_P, 5) == Result::BAD_RESPONSE);
 
   // Read-back transport failure.
+  const size_t frames = r.port.tx_log().size();
   r.port.script_reply(frame(1, 0, {}));
-  r.port.fail_next_read();
+  r.port.script_reply(frame(1, 0, {5}));
+  r.port.fail_read_after(2);  // the write reply takes two reads; the read-back's first read fails
   CHECK(r.servo.write_u8(1, STS::REG_POS_COEF_P, 5) == Result::BUS);
+  CHECK(r.port.tx_log().size() == frames + 2);
 
   // Write failure: no read frame follows.
   Rig w;
@@ -320,11 +323,13 @@ static void test_verify_masks_and_skips() {
   r.port.script_reply(frame(1, 0, {}));
   r.port.script_reply(frame(1, 0, {0x00}));
   CHECK(r.servo.write_u8(1, STS::REG_PHASE, 0x10) == Result::VERIFY_FAILED);
-  // Torque enable calibration value 128 reads back with bit 0 clear.
-  r.port.script_reply(frame(1, 0, {}));
-  r.port.script_reply(frame(1, 0, {0x00}));
-  CHECK(r.servo.write_u8(1, STS::REG_SERVO_EN, 128) == Result::OK);
   const size_t before = r.port.tx_log().size();
+
+  // Torque enable (including calibration value 128) is never read back.
+  r.port.script_reply(frame(1, 0, {}));
+  CHECK(r.servo.write_u8(1, STS::REG_SERVO_EN, 128) == Result::OK);
+  r.port.script_reply(frame(1, 0, {}));
+  CHECK(r.servo.write_u8(1, STS::REG_SERVO_EN, 1) == Result::OK);
 
   // Volatile, read-only and unknown registers are written without a read.
   r.port.script_reply(frame(1, 0, {}));
@@ -335,7 +340,7 @@ static void test_verify_masks_and_skips() {
   CHECK(r.servo.write_u8(1, STS::REG_POSITION, 5) == Result::OK);
   r.port.script_reply(frame(1, 0, {}));
   CHECK(r.servo.write_u8(1, 0xC0, 5) == Result::OK);
-  CHECK(r.port.tx_log().size() == before + 4);
+  CHECK(r.port.tx_log().size() == before + 6);
 }
 
 static void test_verify_span() {
@@ -358,14 +363,14 @@ static void test_verify_span() {
   r.port.script_reply(frame(1, 0, {1, 2, 3, 5}));
   CHECK(r.servo.write_register(1, STS::REG_OVERLOAD_TIME, st, 4) == Result::VERIFY_FAILED);
 
-  // 0x27 stable, 0x28 masked (bit 0), 0x29 volatile.
+  // 0x27 stable, 0x28 and 0x29 volatile.
   const uint8_t mix[3] = {9, 8, 7};
   r.port.script_reply(frame(1, 0, {}));
   r.port.script_reply(frame(1, 0, {9, 8, 0}));
   CHECK(r.servo.write_register(1, STS::REG_SPEED_COEF_I, mix, 3) == Result::OK);
   r.port.script_reply(frame(1, 0, {}));
   r.port.script_reply(frame(1, 0, {9, 9, 0}));
-  CHECK(r.servo.write_register(1, STS::REG_SPEED_COEF_I, mix, 3) == Result::VERIFY_FAILED);
+  CHECK(r.servo.write_register(1, STS::REG_SPEED_COEF_I, mix, 3) == Result::OK);
   r.port.script_reply(frame(1, 0, {}));
   r.port.script_reply(frame(1, 0, {10, 8, 7}));
   CHECK(r.servo.write_register(1, STS::REG_SPEED_COEF_I, mix, 3) == Result::VERIFY_FAILED);
@@ -378,6 +383,18 @@ static void test_verify_new_device_id() {
   r.port.script_reply(frame(2, 0, {2}));
   CHECK(r.servo.write_u8(1, STS::REG_DEVICE_ID, 2) == Result::OK);
   CHECK((r.port.tx_log()[1] == Bytes{0xFF, 0xFF, 0x02, 0x04, 0x02, 0x05, 0x01, 0xF1}));
+
+  // An ID above STS::MAX_ID cannot be addressed afterwards: no read-back.
+  Rig hi;
+  hi.servo.set_verify_writes(true);
+  hi.port.script_reply(frame(1, 0, {}));
+  CHECK(hi.servo.write_u8(1, STS::REG_DEVICE_ID, STS::MAX_ID + 1) == Result::OK);
+  CHECK(hi.port.tx_log().size() == 1);
+  // The highest valid ID is read back.
+  hi.port.script_reply(frame(1, 0, {}));
+  hi.port.script_reply(frame(STS::MAX_ID, 0, {STS::MAX_ID}));
+  CHECK(hi.servo.write_u8(1, STS::REG_DEVICE_ID, STS::MAX_ID) == Result::OK);
+  CHECK(hi.port.tx_log().size() == 3);
 }
 
 static void test_verify_rule_table() {
@@ -418,7 +435,7 @@ static void test_verify_rule_table() {
       {STS::REG_SPEED_COEF_P, 1, VC::STABLE, 0xFF},
       {STS::REG_OVERCURR_TIME, 1, VC::STABLE, 0xFF},
       {STS::REG_SPEED_COEF_I, 1, VC::STABLE, 0xFF},
-      {STS::REG_SERVO_EN, 1, VC::STABLE_MASKED, STSServo::SERVO_EN_VERIFY_MASK},
+      {STS::REG_SERVO_EN, 1, VC::VOLATILE, 0},
       {STS::REG_CTRL_ACCEL, 1, VC::VOLATILE, 0},
       {STS::REG_CTRL_POS, 2, VC::VOLATILE, 0},
       {STS::REG_CTRL_PWM, 2, VC::VOLATILE, 0},

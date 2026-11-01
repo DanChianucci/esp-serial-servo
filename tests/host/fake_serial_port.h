@@ -36,6 +36,8 @@ class FakeSerialPort : public servokit::SerialPort {
   void add_stale_rx(const Bytes& bytes) { m_rx.insert(m_rx.end(), bytes.begin(), bytes.end()); }
   void fail_next_write() { m_fail_write = true; }
   void fail_next_read() { m_fail_read = true; }
+  // Lets the next @p n read_bytes() calls succeed (a reply with a payload takes two), then fails the one after.
+  void fail_read_after(int n) { m_fail_read_after = n; }
   // Drops the frame log, scripted replies, buffered RX and pending failure flags.
   void clear() {
     m_tx.clear();
@@ -43,6 +45,7 @@ class FakeSerialPort : public servokit::SerialPort {
     m_rx.clear();
     m_fail_write = false;
     m_fail_read = false;
+    m_fail_read_after = -1;
   }
 
   // --- inspection ---
@@ -83,6 +86,8 @@ class FakeSerialPort : public servokit::SerialPort {
   }
 
   servokit::srv_result_t read_bytes(const buffer_t data, timeout_duration_t) override {
+    if (m_fail_read_after == 0) m_fail_read = true;
+    if (m_fail_read_after >= 0) --m_fail_read_after;
     if (m_fail_read) {
       m_fail_read = false;
       return servokit::srv_result_t(std::unexpected(servokit::SRV_READ_FAIL.error()));
@@ -117,6 +122,7 @@ class FakeSerialPort : public servokit::SerialPort {
   bool m_rx_enabled = true;
   bool m_fail_write = false;
   bool m_fail_read = false;
+  int m_fail_read_after = -1;
   int m_discards = 0;
   int m_flushes = 0;
   timeout_duration_t m_last_write_timeout = timeout_duration_t::zero();

@@ -55,7 +55,7 @@ constexpr TableEntry VERIFY_TABLE[] = {
     {STS::REG_SPEED_COEF_P, 1, STABLE, 0xFF},
     {STS::REG_OVERCURR_TIME, 1, STABLE, 0xFF},
     {STS::REG_SPEED_COEF_I, 1, STABLE, 0xFF},
-    {STS::REG_SERVO_EN, 1, MASKED, STSServo::SERVO_EN_VERIFY_MASK},
+    {STS::REG_SERVO_EN, 1, VOLATILE, 0x00},
     {STS::REG_CTRL_ACCEL, 1, VOLATILE, 0x00},
     {STS::REG_CTRL_POS, 2, VOLATILE, 0x00},
     {STS::REG_CTRL_PWM, 2, VOLATILE, 0x00},
@@ -147,7 +147,7 @@ Result STSServo::write_register(uint8_t id, uint16_t addr, const uint8_t* data, 
   uint8_t read_id = id;
   if (addr <= STS::REG_DEVICE_ID && STS::REG_DEVICE_ID < addr + len) {
     read_id = data[STS::REG_DEVICE_ID - addr];
-    if (read_id >= STS::BROADCAST_ID) return Result::OK;  // not addressable, nothing to compare
+    if (read_id > STS::MAX_ID) return Result::OK;  // not addressable, nothing to compare
   }
   uint8_t back[MAX_SPAN];
   const Result r = read_register(read_id, addr, back, len);
