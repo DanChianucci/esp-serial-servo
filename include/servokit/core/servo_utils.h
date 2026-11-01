@@ -26,6 +26,10 @@ constexpr srv_stat_t SRV_OVERFLOW   = srv_stat_t(-3);
 constexpr srv_stat_t SRV_PARAM_ERR  = srv_stat_t(-4);
 constexpr srv_stat_t SRV_READ_FAIL  = srv_stat_t(-5);
 constexpr srv_stat_t SRV_WRITE_FAIL = srv_stat_t(-6);
+// Response validation failures (Card 03). Map to Result::BAD_RESPONSE.
+constexpr srv_stat_t SRV_BAD_FRAME    = srv_stat_t(-7);  // short/inconsistent length or bad sync
+constexpr srv_stat_t SRV_BAD_CHECKSUM = srv_stat_t(-8);  // checksum mismatch (verification enabled)
+constexpr srv_stat_t SRV_BAD_ID       = srv_stat_t(-9);  // response from a different device ID
 
 
 
