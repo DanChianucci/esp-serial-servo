@@ -1,3 +1,5 @@
+// ESPSerialPort on the ESP-IDF UART driver. Public behaviour is documented in
+// platform/esp_idf.h. This file is not built or run by the host tests.
 #include "servokit/platform/esp_idf.h"
 
 #include <driver/gpio.h>
@@ -22,6 +24,8 @@ TickType_t remaining_ticks(const Deadline& deadline) {
 }
 }  // namespace
 
+// The ESP-IDF driver needs an RX buffer larger than the hardware FIFO, so the
+// default (a non-positive request) is the FIFO length plus one.
 int def_rx_buffer_size(int uart_num, int rx_buffer_size) {
   if (rx_buffer_size <= 0)
     return UART_HW_FIFO_LEN(uart_num) + 1;
@@ -29,6 +33,8 @@ int def_rx_buffer_size(int uart_num, int rx_buffer_size) {
     return rx_buffer_size;
 }
 
+// TX is an output, open drain when requested. When TX and RX share a pin
+// (single-wire bus) the pin must also be an input so the port can read replies.
 gpio_mode_t def_tx_gpio_mode(int tx_pin, int rx_pin, bool od) {
   int result = GPIO_MODE_DEF_OUTPUT;
   if (od) result |= GPIO_MODE_DEF_OD;
@@ -51,6 +57,7 @@ ESPSerialPort::ESPSerialPort(uart_port_t uart_num, gpio_num_t tx_pin, gpio_num_t
       m_rx_pu(rx_pu) {}
 
 srv_stat_t ESPSerialPort::initialize() {
+  // Refuse to take over a UART that is already in use, including by this object.
   SRV_RETURN_IF(m_initialized, SRV_FAIL);
   SRV_RETURN_IF(uart_is_driver_installed(m_uart_num), SRV_FAIL);
 
@@ -89,8 +96,10 @@ srv_stat_t ESPSerialPort::initialize_gpio() {
                              .intr_type = GPIO_INTR_DISABLE};
 
   SRV_RETURN_IF(gpio_config(&tx_config) != ESP_OK, SRV_PARAM_ERR);
+  // Set TX to the UART idle level (high) before routing the peripheral to it.
   SRV_RETURN_IF(gpio_set_level(m_tx_pin, 1) != ESP_OK, SRV_PARAM_ERR);
 
+  // On a single-wire bus the TX configuration above already makes the pin an input.
   if (m_tx_pin != m_rx_pin) {
     gpio_config_t rx_config = {.pin_bit_mask = BIT64(m_rx_pin),
                                .mode = GPIO_MODE_INPUT,
@@ -100,6 +109,7 @@ srv_stat_t ESPSerialPort::initialize_gpio() {
     SRV_RETURN_IF(gpio_config(&rx_config) != ESP_OK, SRV_PARAM_ERR);
   }
 
+  // Route the UART signals through the GPIO matrix to the chosen pins.
   uint32_t tx_signal_id = UART_PERIPH_SIGNAL(m_uart_num, SOC_UART_TX_PIN_IDX);
   esp_rom_gpio_connect_out_signal(m_tx_pin, tx_signal_id, 0, 0);  // GPIO->UART
 
@@ -111,7 +121,7 @@ srv_stat_t ESPSerialPort::initialize_gpio() {
 
 srv_stat_t ESPSerialPort::close() {
   if (m_initialized) {
-    m_initialized = false;
+    m_initialized = false;  // cleared before teardown: a repeated close() (the destructor's too) does nothing, even if a step below failed
     SRV_RETURN_IF(uart_driver_delete(m_uart_num) != ESP_OK, SRV_PARAM_ERR);
     SRV_RETURN_IF(gpio_reset_pin(m_tx_pin) != ESP_OK, SRV_PARAM_ERR);
     SRV_RETURN_IF(gpio_reset_pin(m_rx_pin) != ESP_OK, SRV_PARAM_ERR);
@@ -135,6 +145,8 @@ srv_stat_t ESPSerialPort::discard_input() {
 
 srv_stat_t ESPSerialPort::flush_output(timeout_duration_t timeout) {
   const Deadline deadline(timeout);
+  // Run at least once so a zero timeout still checks for completion. The driver
+  // wait is in whole ticks, so re-check the deadline after each timed-out wait.
   do {
     esp_err_t result = uart_wait_tx_done(m_uart_num, remaining_ticks(deadline));
     if (result == ESP_OK) return SRV_OK;
@@ -144,6 +156,8 @@ srv_stat_t ESPSerialPort::flush_output(timeout_duration_t timeout) {
 }
 
 srv_stat_t ESPSerialPort::read_sync(const buffer_const_t pattern, timeout_duration_t timeout) {
+  // Read one byte at a time and feed a streaming matcher, so a pattern that
+  // starts inside a partial match is still found.
   SyncMatcher matcher;
   SRV_RETURN_IF(!matcher.reset(pattern), SRV_PARAM_ERR);
   if (matcher.complete()) return SRV_OK;
@@ -162,6 +176,7 @@ srv_result_t ESPSerialPort::read_bytes(const buffer_t data, timeout_duration_t t
   SRV_RETURN_IF(data.empty(), 0);
   const Deadline deadline(timeout);
   size_t total = 0;
+  // One deadline for the whole buffer; each driver read waits only for the time left.
   do {
     int result = uart_read_bytes(m_uart_num, data.data() + total, data.size() - total, remaining_ticks(deadline));
     SRV_RETURN_IF(result < 0, SRV_READ_FAIL);
@@ -172,9 +187,11 @@ srv_result_t ESPSerialPort::read_bytes(const buffer_t data, timeout_duration_t t
 
 srv_result_t ESPSerialPort::write_bytes(const buffer_const_t data, timeout_duration_t timeout) {
   const Deadline deadline(timeout);
+  // uart_write_bytes() has no timeout, so the hand-off is not bounded by the deadline.
   int result = uart_write_bytes(m_uart_num, data.data(), data.size());
   SRV_RETURN_IF(result < 0, SRV_WRITE_FAIL);
 
+  // A zero or negative timeout returns right after the hand-off.
   if (timeout > timeout_duration_t::zero()) {
     SRV_RETURN_ON_ERR(flush_output(deadline.remaining()));
   }

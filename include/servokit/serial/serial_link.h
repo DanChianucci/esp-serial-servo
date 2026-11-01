@@ -1,6 +1,6 @@
 //------------------------------------------------------------------------
 // Filename  :  serial_link.h
-// Project   :  ESP Serial Servo
+// Project   :  servokit
 //
 // Description:
 //    Link-level settings of servos that talk over a serial bus with
@@ -26,6 +26,9 @@
 
 namespace servokit {
 
+/** Link-level settings of a servo on a checksummed serial bus. Implemented
+ *  by servo classes that sit on a ServoController (for example STSServo).
+ *  See the file header for the contract common to every call. */
 class SerialLink {
  public:
   virtual ~SerialLink() = default;

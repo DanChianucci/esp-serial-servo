@@ -12,6 +12,12 @@ endif()
 
 enable_testing()
 
+# Each test is a self-contained executable that compiles the library sources it
+# exercises directly (no shared library target), so a test only builds what it
+# needs. All tests run under ctest and exit non-zero on failure.
+
+# Fake serial port: its own smoke tests, header only.
+
 add_executable(test_fake_serial_port test_fake_serial_port.cpp)
 target_include_directories(test_fake_serial_port PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
@@ -19,6 +25,7 @@ target_include_directories(test_fake_serial_port PRIVATE
 target_compile_options(test_fake_serial_port PRIVATE -Wall -Wextra)
 add_test(NAME test_fake_serial_port COMMAND test_fake_serial_port)
 
+# ServoController and the STS frame class over the fake port.
 add_executable(test_transaction
   test_transaction.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/serial/servo_controller.cpp
@@ -30,6 +37,7 @@ target_include_directories(test_transaction PRIVATE
 target_compile_options(test_transaction PRIVATE -Wall -Wextra)
 add_test(NAME test_transaction COMMAND test_transaction)
 
+# STSServo register layer, typed helpers, and the generic Servo implementation (three tests, same sources).
 add_executable(test_sts_servo
   test_sts_servo.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/serial/servo_controller.cpp
@@ -72,6 +80,7 @@ target_include_directories(test_sts_generic PRIVATE
 target_compile_options(test_sts_generic PRIVATE -Wall -Wextra)
 add_test(NAME test_sts_generic COMMAND test_sts_generic)
 
+# Header-only pieces: no library sources are linked.
 add_executable(test_deadline test_deadline.cpp)
 target_include_directories(test_deadline PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../../include)

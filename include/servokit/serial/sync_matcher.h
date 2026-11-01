@@ -1,3 +1,13 @@
+//------------------------------------------------------------------------
+// Filename  :  sync_matcher.h
+// Project   :  servokit
+//
+// Description:
+//    SyncMatcher: finds a frame sync pattern in a byte stream. Header-only,
+//    no I/O, never blocks, no heap, no platform dependencies. Not
+//    thread-safe: use one matcher per stream.
+//------------------------------------------------------------------------
+
 #ifndef SERVOKIT_SYNC_MATCHER__H
 #define SERVOKIT_SYNC_MATCHER__H
 
@@ -31,6 +41,10 @@ class SyncMatcher {
     m_state = 0;
     if (pattern.size() > MAX_PATTERN) return false;
     m_pattern = pattern;
+    // Build the KMP failure table: m_fail[i] is the length of the longest
+    // proper prefix of pattern[0..i] that is also its suffix. On a mismatch
+    // the matcher falls back to that length instead of restarting at 0, which
+    // is what finds a pattern that begins inside a partial match.
     size_t k = 0;
     for (size_t i = 1; i < pattern.size(); ++i) {
       while (k > 0 && pattern[i] != pattern[k]) k = m_fail[k - 1];
@@ -51,6 +65,8 @@ class SyncMatcher {
   bool feed(uint8_t byte) {
     const size_t n = m_pattern.size();
     if (n == 0) return true;
+    // After a full match, continue from the longest border so overlapping
+    // matches (for example AA in AAA) are still found.
     if (m_state == n) m_state = m_fail[n - 1];
     while (m_state > 0 && byte != m_pattern[m_state]) m_state = m_fail[m_state - 1];
     if (byte == m_pattern[m_state]) ++m_state;

@@ -26,6 +26,9 @@ Contents:
 [SerialPort](#serialport) |
 [ServoController](#servocontroller) |
 [Packets](#packets) |
+[Timing helpers](#timing-helpers) |
+[SyncMatcher](#syncmatcher) |
+[Internal macros](#internal-macros) |
 [ESPSerialPort](#espserialport) |
 [Hardware-verification list](#hardware-verification-list)
 
@@ -81,8 +84,9 @@ STS native units (`families/stseries/sts_units.h`, `STSServo`):
 Conversions to native units round to nearest, halves away from zero, and never
 saturate: the caller (or the typed helper) clamps to the register range. The
 helpers are listed under [STS units header](#sts-units-header). STS target
-positions are limited to +-30719 steps (`STSServo::MAX_TARGET_POSITION`); the
-generic angle domain is the same range expressed in mdeg.
+positions are limited to +-30719 steps (`STSServo::MAX_TARGET_POSITION`; the
+memory table lists +-32766); the generic angle domain is the same range
+expressed in mdeg.
 
 ## Result
 
@@ -264,6 +268,8 @@ value). The destructor is virtual. The Servo does not own the bus.
 | `read_telemetry(Telemetry*)` | One atomic sample, filled on `OK` only. |
 | `read_alarms(AlarmSet*)` | Active alarms. |
 | `clear_alarms()` | Clears latched alarms where supported. |
+| `get_registers()` | Non-owning `RegisterAccess*`, valid for the lifetime of the `Servo`; `nullptr` by default. Non-null exactly when `Feature::REGISTER_ACCESS` is set. See [RegisterAccess](#registeraccess). |
+| `get_serial_link()` | Non-owning `SerialLink*`, valid for the lifetime of the `Servo`; `nullptr` by default (servos not on a checksummed serial link). See [SerialLink](#seriallink). |
 
 Every protection and motion-parameter setter above is gated by its own
 feature and returns `UNSUPPORTED` (nothing sent) when that feature is absent,
@@ -273,6 +279,9 @@ using `Limits`). Then plain writes are made. A setter that writes several
 registers stops at the first failed write and returns that write's `Result`;
 earlier writes of the same call may have applied. Conversions to native units
 round to nearest, halves away from zero.
+
+No RTTI is used: the `RegisterAccess` and `SerialLink` interfaces are reached
+through `get_registers()` and `get_serial_link()` only.
 
 ### PersistScope
 
@@ -285,10 +294,6 @@ cannot be reported. `close()` relocks early, returns the relock `Result` and
 makes the destructor do nothing (it sends nothing and returns `OK` when the
 unlock failed or `close()` already ran). Not copyable, not movable, not
 thread-safe; blocking and timeouts are those of `set_persist()`.
-| `get_registers()` | Non-owning `RegisterAccess*`, valid for the lifetime of the `Servo`; `nullptr` by default. Non-null exactly when `Feature::REGISTER_ACCESS` is set. See [RegisterAccess](#registeraccess). |
-| `get_serial_link()` | Non-owning `SerialLink*`, valid for the lifetime of the `Servo`; `nullptr` by default (servos not on a checksummed serial link). See [SerialLink](#seriallink). |
-
-No RTTI is used: both interfaces are reached through these accessors only.
 
 ## RegisterAccess
 
@@ -447,6 +452,7 @@ STS-specific rules:
 |---|---|---|
 | `STSServo(ServoController*, id = 1)` | 2 | Borrows the controller (must outlive the servo). A null controller makes every bus call return `PARAM`. |
 | `STSServo(std::unique_ptr<ServoController>, id = 1)` | 2 | Takes ownership of the controller; its `SerialPort` must outlive the servo. |
+| copy and move operations | 2 | Deleted: `STSServo` is neither copyable nor movable. An object that owns its controller would otherwise leave a moved-from object with a dangling controller pointer. Construct it in place, or hold it behind a `std::unique_ptr`. |
 | `get_device_id()` | 2 | ID used by methods without an `id` parameter. No bus access. |
 | `set_device_id(id)` | 2 | Changes only the ID this object addresses. Sends nothing; it does not reprogram the servo. |
 | `get_last_status()` | 2 | Status byte of the most recent valid reply (bitmask of `err_code_t`, 0 when healthy). Reset at the start of every call that uses the bus; stays 0 if no valid reply arrived. |
@@ -495,7 +501,7 @@ reset at power-up, "EEPROM" registers follow the lock.
 |---|---|
 | `get_operating_mode(op_mode_t*)` | `BAD_RESPONSE` if the stored value is not a mode. |
 | `set_operating_mode(op_mode_t)` | `OP_SERVO`..`OP_STEP`; others `OUT_OF_RANGE`. Decides how `REG_CTRL_*` are read. |
-| `get_response_mode(rsp_mode_t*)`, `set_response_mode(rsp_mode_t)` | `RSP_READ_PING` stops write acknowledgements. The firmware adapter must call `set_response_mode(STS::RSP_ALL)` at boot so that writes are acknowledged; no generic call does it. |
+| `get_response_mode(rsp_mode_t*)`, `set_response_mode(rsp_mode_t)` | `RSP_READ_PING` stops write acknowledgements. An application using the generic interface must call `set_response_mode(STS::RSP_ALL)` once after power-up so that writes are acknowledged; no generic call does it. |
 | `get_response_delay(uint8_t*)`, `set_response_delay(delay_2us)` | Units of 2 us, 0..254. |
 | `get_servo_enabled(bool*)`, `set_servo_enabled(bool)` | Torque output on/off (SRAM). Never writes the mid-point calibration value. `get_servo_enabled` returns `BAD_RESPONSE` if the register holds neither 0 nor 1. |
 | `set_acceleration_native(accel)` | 0..254, units of 100 steps/s^2 (SRAM). |
@@ -560,12 +566,13 @@ saturate.
 | `mdeg_s_to_steps_s`, `steps_s_to_mdeg_s` | Speed. |
 | `mdeg_s2_to_accel_units`, `accel_units_to_mdeg_s2` | Acceleration, 100 steps/s^2 units. |
 | `current_units_to_ma`, `ma_to_current_units` | 6.5 mA units. |
-| `voltage_units_to_mv` | 0.1 V units to mV. |
+| `voltage_units_to_mv`, `mv_to_voltage_units` | 0.1 V units to mV (exact), and mV to 0.1 V units (rounded). |
+| `permille_to_percent` | Permille of full scale to percent (1 % units), rounded. |
 | `ms_to_time_units` | Milliseconds to 10 ms units. |
 | `decode_sign_magnitude(raw, sign_bit)` | Sign bit selects the sign, lower bits the magnitude; negative zero is 0; bits above the sign bit are the caller's to check. |
 | `decode_position_steps`, `decode_current_units` | Bit 15 sign. |
 | `decode_load_permille(raw, int16_t*)` | Bit 10 sign, magnitude 0..1000. Returns false (output untouched) if a bit above bit 10 is set or the magnitude exceeds 1000. |
-| `AlarmMapRow`, `ALARM_TABLE`, `MAPPED_STATUS_BITS` | Native bit to generic alarms; 0x3F. See [Alarms](#alarms). |
+| `AlarmMapRow` (`native_bit`, `generic`), `ALARM_TABLE`, `MAPPED_STATUS_BITS` | One row of the native-to-generic alarm table: the `err_code_t` bit and the generic alarms it reports; the table; and the bits that have a row (0x3F). See [Alarms](#alarms). |
 | `alarms_from_native(status)` | Maps a status byte; unmapped set bits report `OTHER`. |
 | `reportable_alarms()` | Every alarm with a table row, plus `OTHER`. |
 | `native_from_alarms(AlarmSet, uint8_t*)` | Native mask; false if an alarm has no native bit (output untouched). |
@@ -575,7 +582,9 @@ saturate.
 `families/stseries/stseries_defines.h`, namespace `STS`.
 
 - Protocol constants: `LIB_FW_VERSION`, `SYNC_PATTERN` (0xFFFF), `MAX_ID`
-  (0xFC, the highest usable device ID), `BROADCAST_ID` (0xFE, no response),
+  (0xFC, the highest device ID the readback check follows after a write to
+  `REG_DEVICE_ID`; the memory table allows IDs up to 0xFD), `BROADCAST_ID`
+  (0xFE, no response),
   frame index constants `SYNC_IDX`, `DEVID_IDX`, `LENGTH_IDX`, `CODE_IDX`,
   `DATA_IDX`, size constants `NUM_SYNC_BYTES`, `NUM_DEVID_BYTES`,
   `NUM_LENGTH_BYTES`, `NUM_CODE_BYTES`, `NUM_CHKSUM_BYTES`, `NUM_META_BYTES`.
@@ -608,6 +617,68 @@ saturate.
   `REG_CTRL_TORQUE`, `REG_EEPROM_LOCK`, `REG_POSITION`, `REG_SPEED`,
   `REG_LOAD`, `REG_VOLTAGE`, `REG_TEMPERATURE`, `REG_ASYNC_WRITE_FLAG`,
   `REG_STATUS`, `REG_MOVE_FLAG`, `REG_CURRENT`.
+
+### Control table
+
+Address, width in bytes, access and memory region of every register in
+`reg_addr_e`, from the ST3215 memory table in `doc/STS3215`. Two-byte registers
+are little endian. "EEPROM" registers keep their value across a power cycle
+unless `REG_EEPROM_LOCK` is 1; "SRAM" registers reset at power-up. Items
+marked unverified in the header comments have not been confirmed on hardware
+(see the [hardware-verification list](#hardware-verification-list)). Where the
+memory table's range column and its text disagree, the header comment says so.
+
+| Register | Address | Bytes | Access | Region | Meaning | Values, unit, notes |
+|---|---|---|---|---|---|---|
+| `REG_VER_MAJ` | 0x00 (0) | 1 | RO | EEPROM | Firmware Major Version |  |
+| `REG_VER_SUB` | 0x01 (1) | 1 | RO | EEPROM | Firmware Minor Version |  |
+| `REG_MODEL_MAJ` | 0x03 (3) | 1 | RO | EEPROM | Servo model major (memory table: "main version") |  |
+| `REG_MODEL_SUB` | 0x04 (4) | 1 | RO | EEPROM | Servo model minor (memory table: "sub version") |  |
+| `REG_DEVICE_ID` | 0x05 (5) | 1 | RW | EEPROM | Device ID, unique on the bus; 0xFE is broadcast | values [0, 0xFD] per the memory table; the library treats IDs above 0xFC (MAX_ID) as not readable back |
+| `REG_BAUD_RATE` | 0x06 (6) | 1 | RW | EEPROM | Baud Rate Setting | values `baud_rate_e`; unit enum |
+| `REG_RESPONSE_DELAY` | 0x07 (7) | 1 | RW | EEPROM | Response (return) delay before the servo replies | values [0,254]; unit 2us |
+| `REG_RESPONSE_MODE` | 0x08 (8) | 1 | RW | EEPROM | Response Mode: which commands are acknowledged | values `rsp_mode_t`; unit enum |
+| `REG_MIN_ANGLE_THRESH` | 0x09 (9) | 2 | RW | EEPROM | Min Angle Limit (stroke minimum) | values [0,4094] per the memory table; unit 1step; must be below the maximum; the memory table says 0 for multi-turn absolute control |
+| `REG_MAX_ANGLE_THRESH` | 0x0B (11) | 2 | RW | EEPROM | Max Angle Limit (stroke maximum) | values [1,4095] per the memory table; unit 1step; must be above the minimum; the memory table says 0 for multi-turn absolute control |
+| `REG_OVERTEMP_THRESH` | 0x0D (13) | 1 | RW | EEPROM | Maximum Temperature for alarm | values [0,100]; unit °C |
+| `REG_OVERVOLT_THRESH` | 0x0E (14) | 1 | RW | EEPROM | Maximum Voltage for alarm | values [0,254]; unit 0.1V |
+| `REG_UNDERVOLT_THRESH` | 0x0F (15) | 1 | RW | EEPROM | Minimum Voltage for alarm | values [0,254]; unit 0.1V |
+| `REG_CONTROL_TORQUE_NV` | 0x10 (16) | 2 | RW | EEPROM | Stored Maximum Control Torque | values [0,1000]; unit 0.1%; value copied to `REG_CTRL_TORQUE` at startup |
+| `REG_PHASE` | 0x12 (18) | 1 | RW | EEPROM | SPECIAL FUNCTION BYTE | only write if other register description says to; bit meanings are not in the memory table (bit 4 = multi-turn feedback is used by the library, unverified) |
+| `REG_UNLOAD_ALARM_MASK` | 0x13 (19) | 1 | RW | EEPROM | Unloading Condition Alarm Mask | values `err_code_t` bits; unit bitmask (bit set = that fault releases torque) |
+| `REG_LED_ALARM_MASK` | 0x14 (20) | 1 | RW | EEPROM | LED Indicator Alarm Mask | values `err_code_t` bits; unit bitmask (bit set = that fault flashes the LED) |
+| `REG_POS_COEF_P` | 0x15 (21) | 1 | RW | EEPROM | Position Loop P Coefficient | values [0,254]; unit 1x |
+| `REG_POS_COEF_D` | 0x16 (22) | 1 | RW | EEPROM | Position Loop D Coefficient | values [0,254]; unit 1x |
+| `REG_POS_COEF_I` | 0x17 (23) | 1 | RW | EEPROM | Position Loop I Coefficient | values [0,254]; unit 1x |
+| `REG_START_TORQUE` | 0x18 (24) | 2 | RW | EEPROM | Minimum starting control Torque | values [0,1000]; unit 0.1% |
+| `REG_CW_DEADZONE` | 0x1A (26) | 1 | RW | EEPROM | Clockwise Deadzone | values [0,32]; unit 1step |
+| `REG_CCW_DEADZONE` | 0x1B (27) | 1 | RW | EEPROM | Counter Clockwise Deadzone | values [0,32]; unit 1step |
+| `REG_OVERCURR_THRESH` | 0x1C (28) | 2 | RW | EEPROM | Maximum Current for alarm | values [0,511]; unit 6.5mA |
+| `REG_ANGLE_RESOLUTION` | 0x1E (30) | 1 | RW | EEPROM | Angle Resolution Amplification Factor | values [1,100] per the memory table; unit factor on the sensor's minimum resolution angle; larger values extend the number of turns |
+| `REG_POS_OFFSET` | 0x1F (31) | 2 | RW | EEPROM | Position Correction Offset | values [+-2047]; unit 1step; bit[11] = direction |
+| `REG_OPERATION_MODE` | 0x21 (33) | 1 | RW | EEPROM | Operating Mode Control | values `op_mode_t`; unit enum |
+| `REG_UNLOAD_CTRL_TORQUE` | 0x22 (34) | 1 | RW | EEPROM | Maximum Control Torque for Unloaded condition | values [0,100] meaningful (table range [0,254]); unit 1.0% of maximum torque |
+| `REG_OVERLOAD_TIME` | 0x23 (35) | 1 | RW | EEPROM | Duration for Overload Torque to cause alarm | values [0,254]; unit 10 ms |
+| `REG_OVERLOAD_THRESH` | 0x24 (36) | 1 | RW | EEPROM | Maximum Load for alarm | values [0,100] meaningful (table range [0,254]); unit 1.0% of maximum torque |
+| `REG_SPEED_COEF_P` | 0x25 (37) | 1 | RW | EEPROM | Speed Closed Loop P coefficient (speed mode) | values [0,254] per the memory table; unit 1x |
+| `REG_OVERCURR_TIME` | 0x26 (38) | 1 | RW | EEPROM | Duration for Protection Current to cause Alarm | values [0,254]; unit 10ms |
+| `REG_SPEED_COEF_I` | 0x27 (39) | 1 | RW | EEPROM | Speed Closed Loop I coefficient (speed mode) | values [0,254]; unit none stated in the memory table |
+| `REG_SERVO_EN` | 0x28 (40) | 1 | RW | SRAM | Servo Enable / Disable (torque switch) | values `servo_en_t`; unit enum; value 128 calibrates the current position to 2048 (`REG_POS_OFFSET` correction) |
+| `REG_CTRL_ACCEL` | 0x29 (41) | 1 | RW | SRAM | Acceleration Control | values [0,254]; unit 100 steps/sec^2 |
+| `REG_CTRL_POS` | 0x2A (42) | 2 | RW | SRAM | Position / STEP Control (target) | values [+-32766] per the memory table (the library limits itself to +-30719); unit 1step; bit[15] = direction (sign-magnitude) |
+| `REG_CTRL_PWM` | 0x2C (44) | 2 | RW | SRAM | PWM Duty Cycle Control ("running time" in the memory table) | values [0,1000]; unit 0.1%; direction bit: bit[11] per the memory table, unverified |
+| `REG_CTRL_SPEED` | 0x2E (46) | 2 | RW | SRAM | Speed Control | values [0,3400] (no-load speed; the memory table range column says 254); unit steps/sec; bit[15] = direction when `REG_OPERATION_MODE` == `OP_SPEED` |
+| `REG_CTRL_TORQUE` | 0x30 (48) | 2 | RW | SRAM | Maximum Control Torque | values [0,1000]; unit 0.1%; Takes value from `REG_CONTROL_TORQUE_NV` at startup |
+| `REG_EEPROM_LOCK` | 0x37 (55) | 1 | RW | SRAM | EEPROM Lock Flag | values `eeprom_lock_t`; unit enum; semantics unverified on hardware |
+| `REG_POSITION` | 0x38 (56) | 2 | RO | SRAM | Sensed Position | unit 1step; bit[15] = sign (unverified) |
+| `REG_SPEED` | 0x3A (58) | 2 | RO | SRAM | Sensed Speed | unit steps/sec |
+| `REG_LOAD` | 0x3C (60) | 2 | RO | SRAM | Sensed Load (drive duty cycle) | unit 0.1%; bit[10] = sign, magnitude 0..1000 (unverified) |
+| `REG_VOLTAGE` | 0x3E (62) | 1 | RO | SRAM | Sensed Voltage | unit 0.1V |
+| `REG_TEMPERATURE` | 0x3F (63) | 1 | RO | SRAM | Sensed Temperature | unit °C |
+| `REG_ASYNC_WRITE_FLAG` | 0x40 (64) | 1 | RO | SRAM | Flag set when a deferred (async) write is pending | unit N/A |
+| `REG_STATUS` | 0x41 (65) | 1 | RO | SRAM | Servo Alarm Status | values `err_code_t` bits; unit bitmask |
+| `REG_MOVE_FLAG` | 0x42 (66) | 1 | RO | SRAM | Movement Flag | values `move_flag_t`; unit enum |
+| `REG_CURRENT` | 0x45 (69) | 2 | RO | SRAM | Sensed Current | unit 6.5mA; bit[15] = sign (unverified) |
 
 ## Status codes and helpers
 
@@ -699,6 +770,47 @@ capacity; alters no bytes); `get_capacity()`, `get_raw_buffer()`, `get_size()`,
 | `set_sync`, `set_device_id`, `set_length`, `set_code`, `set_data`, `set_checksum`, `update_length`, `update_checksum` | Write fields, growing the packet size as needed; `SRV_OVERFLOW` if the buffer is too small. |
 | `init(sync, dev_id, length, code, data, checksum)` | Builds a frame from explicit fields. |
 | `init(dev_id, code, data)` | Builds a complete frame: sync, length, and a correct checksum. |
+
+## Timing helpers
+
+`serial/deadline.h`, namespace `servokit::timeout`. Header-only, no platform
+dependency, safe from any thread. Used by `ESPSerialPort` and tested on a host
+with an injected clock.
+
+| Name | Contract |
+|---|---|
+| `BasicDeadline<Clock>` | A point in time on `Clock` after which an operation must stop waiting, fixed at construction from a timeout and a start instant (default: now). Arithmetic saturates: a timeout too large to represent never expires. A zero or negative timeout is expired at construction. |
+| `BasicDeadline::clock`, `duration`, `time_point` | Type aliases of the clock. |
+| `BasicDeadline(timeout, start = now)` | Builds the deadline. |
+| `remaining(now = Clock::now())` | Time left, never negative. |
+| `expired(now = Clock::now())` | True when `now` is at or past the deadline. |
+| `Deadline` | `BasicDeadline<std::chrono::steady_clock>`. |
+| `ceil_ms(duration)` | Whole milliseconds, rounded up; negative gives 0; saturates at `UINT32_MAX`. |
+| `ceil_ticks(ms, tick_rate_hz, max_ticks)` | `ceil(ms * tick_rate_hz / 1000)` in 64 bits, so a wait never ends early; a zero rate is treated as 1; saturates at `max_ticks`. |
+
+## SyncMatcher
+
+`serial/sync_matcher.h`. Header-only streaming matcher that finds a byte
+pattern in a byte stream one byte at a time (Knuth-Morris-Pratt), including a
+pattern that starts inside a partial match. Memory is bounded by
+`SyncMatcher::MAX_PATTERN` (16). No platform dependencies; not thread-safe.
+
+| Member | Contract |
+|---|---|
+| `MAX_PATTERN` | 16; longest supported pattern, bytes. |
+| `reset(pattern)` | Sets the pattern (borrowed: the storage must stay valid and unchanged while the matcher is used) and restarts matching. An empty pattern is matched from the start. Returns false, leaving the matcher empty, if the pattern is longer than `MAX_PATTERN`. |
+| `restart()` | Restarts matching with the current pattern. |
+| `feed(byte)` | Consumes one byte; true when it completes the pattern. After a match the next byte continues the search for an overlapping match; call `restart()` to discard the overlap. |
+| `complete()` | True when the bytes since the last `restart()` or `reset()` end with the pattern, or the pattern is empty. |
+
+## Internal macros
+
+`serial/servo_internal.h` holds early-return macros used by the library's own
+sources: `SRV_RETURN_IF(cond, val)`, `SRV_RETURN_IF_NOT(cond, val)` and
+`SRV_RETURN_ON_ERR(expr)` (returns the status of an `srv_stat_t` or
+`srv_result_t` expression when it is an error). They are implementation
+helpers and not part of the public API; applications should not include the
+header.
 
 ## ESPSerialPort
 

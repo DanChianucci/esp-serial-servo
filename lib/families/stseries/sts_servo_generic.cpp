@@ -1,3 +1,5 @@
+// STSServo generic Servo implementation, built on the register helpers.
+// Contracts are documented in sts_servo.h and core/servo.h.
 #include <algorithm>
 
 #include "servokit/families/stseries/sts_servo.h"
@@ -19,6 +21,7 @@ constexpr size_t T_CURRENT = STS::REG_CURRENT - STS::REG_POSITION;
 static_assert(T_CURRENT + 2 == TELEMETRY_LEN, "telemetry span must end with the current register");
 static_assert(STS::REG_DEVICE_ID + 1 == IDENTITY_LEN, "identity span must end with the device ID register");
 
+// Little-endian 16-bit field at offset off of a register block.
 uint16_t word(const uint8_t* b, size_t off) { return static_cast<uint16_t>(b[off] | (b[off + 1] << 8)); }
 }  // namespace
 
@@ -35,7 +38,7 @@ Capabilities STSServo::get_capabilities() const {
   Limits& l = c.limits;
   l.angle_min_mdeg = STS::units::steps_to_mdeg(-MAX_TARGET_POSITION);
   l.angle_max_mdeg = STS::units::steps_to_mdeg(MAX_TARGET_POSITION);
-  l.resolution_mdeg = 88;
+  l.resolution_mdeg = 88;  // 87.890625 mdeg per step, rounded
   l.max_speed_mdeg_s = STS::units::steps_s_to_mdeg_s(MAX_SPEED);
   l.max_accel_mdeg_s2 = STS::units::accel_units_to_mdeg_s2(MAX_ACCELERATION);
   l.max_torque_permille = MAX_TORQUE;
@@ -147,6 +150,7 @@ Result STSServo::cancel_motion() {
     m_cancel_step = CancelStep::READ_POSITION;
     return r;
   }
+  // The servo is stopped and torque is off, so this is its resting position.
   const int32_t steps = STS::units::decode_position_steps(word(b, 0));
   if (steps < -MAX_TARGET_POSITION || steps > MAX_TARGET_POSITION) {
     m_cancel_step = CancelStep::POSITION_OUT_OF_DOMAIN;
@@ -170,10 +174,13 @@ Result STSServo::read_telemetry(Telemetry* out) {
 
   Telemetry t;
   int16_t load = 0;
+  // Any undecodable field fails the whole sample rather than returning a partly valid one.
   if (!u::decode_load_permille(word(b, T_LOAD), &load) || b[T_MOVE] > 1) return Result::BAD_RESPONSE;
   t.position_mdeg = u::steps_to_mdeg(u::decode_position_steps(word(b, T_POS)));
   t.current_ma = u::current_units_to_ma(u::decode_current_units(word(b, T_CURRENT)));
   t.temperature_c = b[T_TEMP];
+  // Combine REG_STATUS with the reply's own status byte so a fault reported only
+  // in the reply (and tolerated by read_with_status()) is not lost.
   t.alarms = u::alarms_from_native(static_cast<uint8_t>(b[T_STATUS] | m_last_status));
   t.load_valid = true;
   t.load_permille = load;

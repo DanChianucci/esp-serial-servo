@@ -1,3 +1,16 @@
+//------------------------------------------------------------------------
+// Filename  :  servokit.h
+// Project   :  servokit
+//
+// Description:
+//    Umbrella header: includes the core interfaces, the serial transport
+//    layer and the STS family. It includes a platform port only when one is
+//    selected: ESP-IDF builds (ESP_PLATFORM, or SERVOKIT_IMPL_ESP defined)
+//    get platform/esp_idf.h. Defining ARDUINO or SERVOKIT_IMPL_ARDUINO asks
+//    for platform/arduino.h, which the library does not provide yet, so such
+//    a build fails at that include until an Arduino port exists.
+//------------------------------------------------------------------------
+
 #ifndef SERVOKIT__H
 #define SERVOKIT__H
 

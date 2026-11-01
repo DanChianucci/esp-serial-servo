@@ -1,3 +1,5 @@
+// STSeriesPacket implementation. The frame layout and the meaning of each
+// field are documented in stseries_packet.h.
 #include "servokit/families/stseries/stseries_packet.h"
 
 #include <algorithm>
@@ -23,6 +25,8 @@ STSeriesPacket::STSeriesPacket(const buffer_t& buffer) : ServoPacket(buffer) {
 }
 
 
+// The index is relative to data_buffer(), which starts after the sync bytes;
+// the controller reads sync first and the rest of the header into data_buffer().
 uint8_t STSeriesPacket::len_index() { return LENGTH_IDX-NUM_SYNC_BYTES; };
 uint8_t STSeriesPacket::checksum_index() { return (m_size > 0) ? (m_size - 1) : 0; };
 uint8_t STSeriesPacket::data_size() { return (m_size >= NUM_META_BYTES) ? (m_size - NUM_META_BYTES) : 0; }
@@ -46,6 +50,8 @@ srv_stat_t STSeriesPacket::init(uint16_t sync, uint8_t dev_id, uint8_t length, u
   return SRV_OK;
 }
 
+// length = data + code + checksum; the checksum is written as 0 first so the
+// frame has its full size, then replaced by the computed value.
 srv_stat_t STSeriesPacket::init(uint8_t dev_id, uint8_t code, const buffer_const_t data) {
   SRV_RETURN_ON_ERR(init(SYNC_PATTERN, dev_id, data.size() + (NUM_CODE_BYTES + NUM_CHKSUM_BYTES), code, data, 0x00));
   return update_checksum();
@@ -64,6 +70,9 @@ buffer_t STSeriesPacket::data_buffer() { return m_buffer.subspan(NUM_SYNC_BYTES)
 
 bool STSeriesPacket::is_well_formed() { return is_frame_valid() && is_checksum_valid(); }
 
+// Frame validity is separate from the checksum so the controller can accept a
+// frame with a bad checksum when verification is switched off, while still
+// rejecting a frame whose sync or length is wrong.
 bool STSeriesPacket::is_frame_valid() {
   return (get_size() >= NUM_META_BYTES) &&  // 1. Packet at least 6 bytes
          (get_sync() == SYNC_PATTERN) &&
@@ -76,10 +85,13 @@ bool STSeriesPacket::is_checksum_valid() {
 
 int STSeriesPacket::get_packet_device_id() { return (get_size() > DEVID_IDX) ? get_device_id() : -1; }
 
+// Checksum = ~(sum of every byte after the sync pattern, excluding the checksum
+// byte itself), truncated to 8 bits. The sum runs from index 2 to size - 2.
 uint8_t STSeriesPacket::compute_checksum() {
   return ~std::accumulate(m_buffer.begin() + NUM_SYNC_BYTES, m_buffer.begin() + m_size - 1, 0);
 }
 
+// The length field counts the bytes after itself: data + code + checksum.
 uint8_t STSeriesPacket::compute_length() { return (m_size - NUM_META_BYTES) + (NUM_CODE_BYTES + NUM_CHKSUM_BYTES); }
 
 // ##############################################################################
@@ -108,6 +120,7 @@ uint8_t STSeriesPacket::get_byte(uint8_t idx, uint8_t default_val) {
   return m_buffer[idx];
 }
 
+// Little-endian read. Needs both bytes inside the packet, hence idx + 1 < size.
 uint16_t STSeriesPacket::get_word(uint8_t idx, uint16_t default_val) {
   if ((uint16_t)idx + 1 >= m_size) return default_val;
   return (uint16_t)(m_buffer[idx + 1]) << 8 | (m_buffer[idx]);
@@ -148,6 +161,7 @@ srv_stat_t STSeriesPacket::set_checksum(uint8_t val) {
   return set_byte(m_size - 1, val);
 }
 
+// Resizing first makes the capacity check cover the copy below.
 srv_stat_t STSeriesPacket::set_data(const buffer_const_t val) {
   SRV_RETURN_ON_ERR(resize(NUM_META_BYTES + val.size()));
   std::copy(val.begin(), val.end(), m_buffer.begin() + DATA_IDX);
@@ -164,6 +178,10 @@ srv_stat_t STSeriesPacket::set_byte(size_t idx, uint8_t val) {
   return SRV_OK;
 }
 
+// Writes the word at the start of the buffer, high byte first; idx is used
+// only for the capacity check. The only caller is set_sync() (index 0) with a
+// symmetric pattern, so byte order does not matter there, but the order is the
+// reverse of get_word().
 srv_stat_t STSeriesPacket::set_word(size_t idx, uint16_t val) {
   SRV_RETURN_IF(get_capacity() <= idx + 1, SRV_OVERFLOW);
   m_buffer[0] = val >> 8;

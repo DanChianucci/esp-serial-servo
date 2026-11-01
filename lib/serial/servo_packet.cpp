@@ -1,3 +1,4 @@
+// ServoPacket: the buffer bookkeeping shared by every protocol family.
 #include "servokit/serial/servo_packet.h"
 #include "servokit/serial/servo_internal.h"
 #include <utility>

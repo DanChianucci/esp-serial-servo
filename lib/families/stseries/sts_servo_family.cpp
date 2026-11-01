@@ -1,4 +1,6 @@
 
+// STSServo typed helpers: one register read or write each, in the family's
+// native units. Contracts are documented in sts_servo.h.
 #include "servokit/families/stseries/sts_servo.h"
 
 namespace servokit {
@@ -18,7 +20,7 @@ Result STSServo::read_bool(uint16_t addr, bool* out) {
   uint8_t v = 0;
   const Result r = read_u8(m_id, addr, &v);
   if (r != Result::OK) return r;
-  if (v > 1) return Result::BAD_RESPONSE;
+  if (v > 1) return Result::BAD_RESPONSE;  // a flag register holds only 0 or 1
   *out = v == 1;
   return Result::OK;
 }
@@ -103,7 +105,7 @@ Result STSServo::set_target_position(int32_t steps) {
   return write_u16(m_id, STS::REG_CTRL_POS, sign_magnitude(steps));
 }
 
-// --- EEPROM lock and phase ---
+// --- EEPROM lock and REG_PHASE ---
 // The lock is changed only by these calls; no setter touches it.
 
 Result STSServo::get_eeprom_locked(bool* locked) { return read_bool(STS::REG_EEPROM_LOCK, locked); }

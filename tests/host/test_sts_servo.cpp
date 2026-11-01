@@ -19,6 +19,14 @@ using namespace servokit;
 using namespace servokit_test;
 using std::chrono::milliseconds;
 
+// STSServo may own its controller, so it must not be copied or moved: a moved-from
+// object would keep a dangling controller pointer.
+#include <type_traits>
+static_assert(!std::is_copy_constructible_v<STSServo>, "STSServo must not be copyable");
+static_assert(!std::is_copy_assignable_v<STSServo>, "STSServo must not be copy assignable");
+static_assert(!std::is_move_constructible_v<STSServo>, "STSServo must not be movable");
+static_assert(!std::is_move_assignable_v<STSServo>, "STSServo must not be move assignable");
+
 // Builds an STS status frame: FF FF id len status params... checksum.
 static Bytes frame(uint8_t id, uint8_t status, Bytes params, bool good_checksum = true, int len_delta = 0) {
   Bytes f = {0xFF, 0xFF, id, (uint8_t)(params.size() + 2 + len_delta), status};

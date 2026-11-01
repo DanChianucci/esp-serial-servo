@@ -1,4 +1,6 @@
 
+// ServoController: the command/response engine. Its public contract (timeouts,
+// return codes) is documented in servo_controller.h.
 #include "servokit/serial/servo_controller.h"
 #include "servokit/core/servo_utils.h"
 #include "servokit/serial/servo_internal.h"
@@ -18,6 +20,9 @@ ServoController::ServoController(SerialPort* bus, timeout_duration_t tx_timeout,
   m_transmit_timeout = tx_timeout;
   m_response_timeout = rx_timeout;
   m_auto_disable_rx = auto_disable_rx;
+  // The budget is the sum of both timeouts. When either is not positive the
+  // plain sum is used, which can be non-positive and then falls back to the
+  // default; when both are positive the sum saturates instead of overflowing.
   const timeout_duration_t total =
       (tx_timeout > timeout_duration_t::zero() && rx_timeout > timeout_duration_t::zero())
           ? saturating_add(tx_timeout, rx_timeout)
@@ -25,6 +30,7 @@ ServoController::ServoController(SerialPort* bus, timeout_duration_t tx_timeout,
   m_transaction_timeout = (total > timeout_duration_t::zero()) ? total : FALLBACK_TRANSACTION_TIMEOUT;
 }
 
+// The mapping is documented at the declaration in servo_controller.h.
 Result to_result(int code) {
   if (code == 0) return Result::OK;
   if (code == SRV_TIMEOUT.error()) return Result::TIMEOUT;
@@ -75,20 +81,22 @@ srv_stat_t ServoController::sync_response(const buffer_const_t& sync_pattern, ti
 
 srv_result_t ServoController::read_response(const buffer_t& buffer, size_t readlen, timeout_duration_t timeout) {
   if (timeout == DEF_TIMEOUT) timeout = m_response_timeout;
-  SRV_RETURN_IF(readlen > buffer.size(), SRV_OVERFLOW);
+  SRV_RETURN_IF(readlen > buffer.size(), SRV_OVERFLOW);  // never read past the caller's buffer
   return this->m_servo_bus->read_bytes(buffer.first(readlen), timeout);
 }
 
 srv_result_t ServoController::read_response(ServoPacket* response, timeout_duration_t timeout) {
   srv_result_t result = 0;
   if (timeout == DEF_TIMEOUT) timeout = m_response_timeout;
+  // Reset first so a failed read cannot leave the previous frame looking valid.
   SRV_RETURN_ON_ERR(response->reset());
   SRV_RETURN_ON_ERR(
       result = read_raw_response(response->sync_buffer(), response->data_buffer(), response->len_index(), timeout));
   SRV_RETURN_ON_ERR(response->resize(get_value(result)));
+  // Frame (sync, length) is always enforced; only the checksum can be waived.
   SRV_RETURN_IF_NOT(response->is_frame_valid(), SRV_BAD_FRAME);
   if (!response->is_checksum_valid()) {
-    ++m_checksum_errors;
+    ++m_checksum_errors;  // counted even when verification is off
     SRV_RETURN_IF(m_verify_checksum, SRV_BAD_CHECKSUM);
   }
   return result;
@@ -109,14 +117,15 @@ srv_result_t ServoController::read_raw_response(const buffer_const_t sync_buffer
   // 1. Read until sync pattern is found
   SRV_RETURN_IF(remaining() <= timeout_duration_t::zero(), SRV_TIMEOUT);
   SRV_RETURN_ON_ERR(sync_response(sync_buffer, remaining()));
-  // 2. Read dev id, length
+  // 2. Read dev id, length (everything up to and including the length byte)
   readlen = (len_pos + 1);
   SRV_RETURN_IF(remaining() <= timeout_duration_t::zero(), SRV_TIMEOUT);
   srv_result_t got = read_response(data_buffer.subspan(pktlen), readlen, remaining());
   SRV_RETURN_ON_ERR(got);
   SRV_RETURN_IF(get_value(got) < readlen, SRV_TIMEOUT);  // short read: the rest never arrived
   pktlen += readlen;
-  // 3. Read until checksum is found
+  // 3. Read the rest of the frame: the length byte counts the bytes after
+  //    itself (code/status, data and checksum).
   readlen = data_buffer[len_pos];
   SRV_RETURN_IF((size_t)readlen > data_buffer.size() - pktlen, SRV_BAD_FRAME);  // length byte exceeds buffer
   if (readlen > 0) {
@@ -127,7 +136,7 @@ srv_result_t ServoController::read_raw_response(const buffer_const_t sync_buffer
   }
   pktlen += readlen;
 
-  return (int)(pktlen + sync_buffer.size());
+  return (int)(pktlen + sync_buffer.size());  // the sync pattern was consumed, not stored, but is part of the frame
 }
 
 srv_result_t ServoController::command_response(ServoPacket* cmd, ServoPacket* rsp, timeout_duration_t cmd_timeout,
@@ -136,11 +145,13 @@ srv_result_t ServoController::command_response(ServoPacket* cmd, ServoPacket* rs
   const timeout_duration_t budget = m_transaction_timeout;
   const clock::time_point start = clock::now();
 
-  // Resolve the default first so the clamp covers it.
+  // One budget covers send and receive. Resolve the default first so the clamp
+  // below also applies to it.
   if (cmd_timeout == DEF_TIMEOUT) cmd_timeout = m_transmit_timeout;
   if (cmd_timeout > budget) cmd_timeout = budget;
   SRV_RETURN_ON_ERR(send_command(cmd, cmd_timeout));
 
+  // The receive step gets whatever the send step left of the budget.
   const timeout_duration_t remaining = budget - (clock::now() - start);
   SRV_RETURN_IF(remaining <= timeout_duration_t::zero(), SRV_TIMEOUT);
   if (rsp_timeout == DEF_TIMEOUT) rsp_timeout = m_response_timeout;
@@ -150,6 +161,7 @@ srv_result_t ServoController::command_response(ServoPacket* cmd, ServoPacket* rs
   SRV_RETURN_ON_ERR(result);
   const int cmd_id = cmd->get_packet_device_id();
   const int rsp_id = rsp->get_packet_device_id();
+  // A reply from another servo is rejected; -1 means the family has no ID to compare.
   SRV_RETURN_IF(cmd_id >= 0 && rsp_id >= 0 && cmd_id != rsp_id, SRV_BAD_ID);
   return result;
 }

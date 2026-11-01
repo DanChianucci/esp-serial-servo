@@ -1,6 +1,6 @@
 //------------------------------------------------------------------------
 // Filename  :  sts_units.h
-// Project   :  ESP Serial Servo
+// Project   :  servokit
 //
 // Description:
 //    Unit conversions, feedback decoders and the alarm mapping table of the
@@ -38,21 +38,25 @@
 
 namespace servokit {
 namespace STS {
+/** Pure conversion and decoding helpers of the STS family (see the file header). */
 namespace units {
 
-constexpr int64_t STEPS_PER_REV = 4096;
-constexpr int64_t MDEG_PER_REV = 360000;
+constexpr int64_t STEPS_PER_REV = 4096;    ///< Position steps in one revolution.
+constexpr int64_t MDEG_PER_REV = 360000;   ///< Millidegrees in one revolution.
 constexpr int64_t CURRENT_UNIT_X2_MA = 13;  ///< 6.5 mA expressed in half milliamps.
-constexpr int64_t VOLTAGE_UNIT_MV = 100;
-constexpr int64_t TIME_UNIT_MS = 10;
+constexpr int64_t VOLTAGE_UNIT_MV = 100;    ///< One voltage register unit (0.1 V), in mV.
+constexpr int64_t TIME_UNIT_MS = 10;        ///< One protection-time register unit, in ms.
 constexpr int32_t CURRENT_FEEDBACK_MAX_UNITS = 0x7FFF;  ///< Largest current feedback magnitude (15 bits), 6.5 mA units.
 
-/** Signed division rounding to nearest, halves away from zero. @p den > 0. */
+/** Signed division rounding to nearest, halves away from zero. @p den > 0.
+ *  The magnitude is rounded and the sign restored, so negative and positive
+ *  values round symmetrically (C++ integer division truncates toward zero,
+ *  which would round negative halves the other way). */
 constexpr int64_t round_div(int64_t num, int64_t den) {
   return num >= 0 ? (num + den / 2) / den : -((-num + den / 2) / den);
 }
 
-/** Steps to mdeg: steps * 87.890625. */
+/** Steps to mdeg: steps * 87.890625, rounded. */
 constexpr int32_t steps_to_mdeg(int32_t steps) {
   return static_cast<int32_t>(round_div(static_cast<int64_t>(steps) * MDEG_PER_REV, STEPS_PER_REV));
 }
@@ -93,7 +97,7 @@ constexpr int32_t ma_to_current_units(int32_t ma) {
   return static_cast<int32_t>(round_div(static_cast<int64_t>(ma) * 2, CURRENT_UNIT_X2_MA));
 }
 
-/** Raw voltage (0.1 V units) to mV. */
+/** Raw voltage (0.1 V units) to mV. Exact; no rounding needed. */
 constexpr uint32_t voltage_units_to_mv(uint32_t units) { return static_cast<uint32_t>(units * VOLTAGE_UNIT_MV); }
 
 /** mV to voltage units of 0.1 V, rounded. */
@@ -155,7 +159,7 @@ constexpr AlarmMapRow ALARM_TABLE[] = {
     {STAT_OVERLOAD, AlarmSet(Alarm::OVERLOAD)},
 };
 
-/** Bits of a native status byte that have a row in ALARM_TABLE. */
+/** Bits of a native status byte that have a row in ALARM_TABLE (bits 0..5). */
 constexpr uint8_t MAPPED_STATUS_BITS = 0x3F;
 
 /** Translates a native status byte. Every set bit is reported: bits without a

@@ -1,6 +1,6 @@
 //------------------------------------------------------------------------
 // Filename  :  servo.h
-// Project   :  ESP Serial Servo
+// Project   :  servokit
 //
 // Description:
 //    Family-agnostic Servo interface (tier 1 of the access tiers).
@@ -38,11 +38,18 @@ namespace servokit {
 class RegisterAccess;
 class SerialLink;
 
+/** Family-neutral servo. Only move_to() and get_capabilities() are pure
+ *  virtual; every other operation defaults to Result::UNSUPPORTED (or the
+ *  stated default value) and is overridden by a family that provides it. See
+ *  the file header for the contract common to every operation. */
 class Servo {
  public:
+  /** Virtual: a Servo may be destroyed through a base pointer. Destroying it
+   *  sends nothing to the bus. */
   virtual ~Servo() = default;
 
-  /** Absolute move in the servo's frame.
+  /** Absolute move in the servo's frame. Does not wait for the move to
+   *  finish: it returns once the target is accepted.
    *  @param angle_mdeg Target angle in mdeg.
    *  @return OK, OUT_OF_RANGE outside the limits' angle domain, or a bus error. */
   virtual Result move_to(int32_t angle_mdeg) = 0;
@@ -51,11 +58,13 @@ class Servo {
    *  prior identify(). Does not touch the bus. */
   virtual Capabilities get_capabilities() const = 0;
 
-  /** One transaction to check the servo responds. No retries. */
+  /** One transaction to check the servo responds. No retries.
+   *  @return OK when the servo answers, TIMEOUT if it does not, or another
+   *          bus error; UNSUPPORTED by default. */
   virtual Result probe() { return Result::UNSUPPORTED; }
 
-  /** Reads family, model, firmware version and device ID.
-   *  @param[out] out Filled on OK only. */
+  /** Reads family, model, servo firmware version and device ID.
+   *  @param[out] out Filled on OK only; null returns PARAM where supported. */
   virtual Result identify(Identity* out) {
     (void)out;
     return Result::UNSUPPORTED;

@@ -1,9 +1,10 @@
 //------------------------------------------------------------------------
 // Filename  :  persist_scope.h
-// Project   :  ESP Serial Servo
+// Project   :  servokit
 //
 // Description:
-//    Scope guard around Servo::set_persist(). Header-only.
+//    Scope guard around Servo::set_persist(): makes configuration writes
+//    persistent for the lifetime of the guard. Header-only.
 //------------------------------------------------------------------------
 
 #ifndef PERSIST_SCOPE__H
