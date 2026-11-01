@@ -175,11 +175,64 @@ static void test_result_mapping() {
   CHECK(to_result(srv_result_t(std::unexpected(SRV_TIMEOUT.error()))) == Result::TIMEOUT);
 }
 
+static void test_budget_clamps_default_tx_timeout() {
+  Rig r;  // tx timeout 10 ms
+  CHECK(r.ctl.set_transaction_timeout(milliseconds(4)).error() == SRV_OK.error());
+  r.port.script_reply(frame(1, 0, {1}));
+  (void)r.run();
+  CHECK(r.port.last_write_timeout() <= milliseconds(4));
+  CHECK(r.port.last_write_timeout() > timeout_duration_t::zero());
+
+  // Explicit command timeout above the budget is clamped as well.
+  (void)r.ctl.command_response(&r.cmd, &r.rsp, milliseconds(100));
+  CHECK(r.port.last_write_timeout() <= milliseconds(4));
+}
+
+static void test_huge_durations() {
+  Rig r;
+  CHECK(r.ctl.set_transaction_timeout(timeout_duration_t::max()).error() == SRV_OK.error());
+  r.port.script_reply(frame(1, 0, {9}));
+  auto res = r.run();
+  CHECK(res.has_value());
+  CHECK(r.rsp.get_data_byte(0) == 9);
+
+  // No answer with a huge budget: still a clean TIMEOUT from the scripted fake.
+  r.port.script_timeout();
+  res = r.ctl.command_response(&r.cmd, &r.rsp, timeout_duration_t::max(), timeout_duration_t::max());
+  CHECK(!res.has_value() && res.error() == SRV_TIMEOUT.error());
+
+  // Constructor with huge timeouts saturates instead of overflowing.
+  FakeSerialPort port;
+  ServoController big(&port, timeout_duration_t::max(), timeout_duration_t::max());
+  CHECK(big.transaction_timeout() == timeout_duration_t::max());
+}
+
+static void test_rx_reenabled_after_write_failure() {
+  Rig r;  // auto-disable RX is the default
+  r.port.fail_next_write();
+  auto res = r.run();
+  CHECK(!res.has_value() && to_result(res) == Result::BUS);
+  CHECK(r.port.rx_enabled());
+}
+
+static void test_id_mismatch_with_verification() {
+  Rig r;
+  CHECK(r.ctl.verify_checksum());
+  r.port.script_reply(frame(2, 0, {7}));
+  auto res = r.run();
+  CHECK(!res.has_value() && res.error() == SRV_BAD_ID.error());
+  CHECK(to_result(res) == Result::BAD_RESPONSE);
+}
+
 int main() {
   test_flush_and_stale();
   test_timeouts();
   test_checksum_option();
   test_result_mapping();
+  test_budget_clamps_default_tx_timeout();
+  test_huge_durations();
+  test_rx_reenabled_after_write_failure();
+  test_id_mismatch_with_verification();
   if (g_failures) {
     std::printf("%d failure(s)\n", g_failures);
     return 1;

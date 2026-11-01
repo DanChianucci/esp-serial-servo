@@ -6,14 +6,23 @@
 namespace servokit {
 using namespace timeout;
 
+// a + b for non-negative durations, saturating at the maximum instead of overflowing.
+static timeout_duration_t saturating_add(timeout_duration_t a, timeout_duration_t b) {
+  if (a > timeout_duration_t::max() - b) return timeout_duration_t::max();
+  return a + b;
+}
+
 ServoController::ServoController(SerialPort* bus, timeout_duration_t tx_timeout, timeout_duration_t rx_timeout,
                                  bool auto_disable_rx) {
   m_servo_bus = bus;
   m_transmit_timeout = tx_timeout;
   m_response_timeout = rx_timeout;
   m_auto_disable_rx = auto_disable_rx;
-  m_transaction_timeout = (tx_timeout + rx_timeout > timeout_duration_t::zero()) ? tx_timeout + rx_timeout
-                                                                                 : FALLBACK_TRANSACTION_TIMEOUT;
+  const timeout_duration_t total =
+      (tx_timeout > timeout_duration_t::zero() && rx_timeout > timeout_duration_t::zero())
+          ? saturating_add(tx_timeout, rx_timeout)
+          : tx_timeout + rx_timeout;
+  m_transaction_timeout = (total > timeout_duration_t::zero()) ? total : FALLBACK_TRANSACTION_TIMEOUT;
 }
 
 Result to_result(int code) {
@@ -43,8 +52,11 @@ srv_result_t ServoController::send_command(const buffer_const_t data, timeout_du
 
   if (m_auto_disable_rx) {
     SRV_RETURN_ON_ERR(m_servo_bus->enable_rx(false));
-    SRV_RETURN_ON_ERR(result = m_servo_bus->write_bytes(data, timeout));
-    SRV_RETURN_ON_ERR(m_servo_bus->enable_rx(true));
+    result = m_servo_bus->write_bytes(data, timeout);
+    // Always hand the bus back to receive mode, even when the write failed.
+    const srv_stat_t rx_stat = m_servo_bus->enable_rx(true);
+    SRV_RETURN_ON_ERR(result);
+    SRV_RETURN_ON_ERR(rx_stat);
   } else {
     SRV_RETURN_ON_ERR(result = m_servo_bus->write_bytes(data, timeout));
   }
@@ -89,7 +101,9 @@ srv_result_t ServoController::read_raw_response(const buffer_const_t sync_buffer
   int pktlen = 0;
 
   // Own deadline: every step gets only the time left, so the whole response is bounded by `timeout`.
-  const clock::time_point deadline = clock::now() + timeout;
+  const clock::time_point now = clock::now();
+  const clock::time_point deadline =
+      (timeout > clock::time_point::max() - now) ? clock::time_point::max() : now + timeout;
   auto remaining = [&]() { return deadline - clock::now(); };
 
   // 1. Read until sync pattern is found
@@ -122,6 +136,8 @@ srv_result_t ServoController::command_response(ServoPacket* cmd, ServoPacket* rs
   const timeout_duration_t budget = m_transaction_timeout;
   const clock::time_point start = clock::now();
 
+  // Resolve the default first so the clamp covers it.
+  if (cmd_timeout == DEF_TIMEOUT) cmd_timeout = m_transmit_timeout;
   if (cmd_timeout > budget) cmd_timeout = budget;
   SRV_RETURN_ON_ERR(send_command(cmd, cmd_timeout));
 
