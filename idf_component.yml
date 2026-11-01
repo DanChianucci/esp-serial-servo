@@ -1,6 +1,6 @@
 description: servokit
 license: MIT
-version: 0.0.1
+version: 0.1.0
 repository: git@github.com:DanChianucci/esp-serial-servo.git
 url: https://github.com/DanChianucci/esp-serial-servo
 dependencies:
